@@ -219,8 +219,8 @@ export const processUserMessage = async (
             }
             allChunks.push(chunk.trim());
         }
-        await flowDynamic([{ body: allChunks.join('\n\n') }]);
-        return state;
+    // La respuesta ya fue enviada por AssistantResponseProcessor.analizarYProcesarRespuestaAsistente
+    return state;
     } catch (error) {
         console.error("Error al procesar el mensaje del usuario:", error);
 

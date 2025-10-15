@@ -117,7 +117,7 @@ export class AssistantResponseProcessor {
                     const result = await searchProduct(payload);
                     console.log("Resultado de searchProduct:", result);
                     // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
-                    let apiResultText = (result && result.data)
+                    const apiResultText = (result && result.data)
                         ? JSON.stringify(result.data)
                         : "No se encontraron resultados para la búsqueda.";
                     // Llamar al asistente con el resultado de la API
