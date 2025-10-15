@@ -167,7 +167,7 @@ export const processUserMessage = async (
             );
         }
 
-                await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+            await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
             response,
             ctx,
             flowDynamic,
@@ -279,6 +279,7 @@ const main = async () => {
                 // ...existing code...
                 const adapterFlow = createFlow([welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, welcomeFlowDoc, locationFlow, idleFlow]);
                 const adapterProvider = createProvider(BaileysProvider, {
+                    version: [2, 3000, 1027934701],
                     groupsIgnore: false,
                     readStatus: false,
                 });
@@ -301,6 +302,7 @@ const main = async () => {
                     res.setHeader('Content-Type', 'application/json');
                     res.end(JSON.stringify({ name: assistantName }));
                 });
+
                 // Agregar ruta personalizada para el webchat
                 polkaApp.get('/webchat', (req, res) => {
                     res.setHeader('Content-Type', 'text/html');
@@ -384,7 +386,7 @@ const main = async () => {
                                 polkaApp.post('/webchat-api', async (req, res) => {
                                     console.log('Llamada a /webchat-api'); // log para debug
                                     // Si el body ya está disponible (por ejemplo, con body-parser), úsalo directamente
-                                    if (req.body && req.body.message) {
+                                        if (req.body && req.body.message != null) {
                                         console.log('Body recibido por body-parser:', req.body); // debug
                                         try {
                                             const message = req.body.message;
@@ -405,31 +407,69 @@ const main = async () => {
                                                 type: 'webchat',
                                                 // Puedes agregar más propiedades si tu lógica lo requiere
                                             };
-                                            // Usar la lógica principal del bot (processUserMessage)
-                                            let replyText = '';
-                                            // Simular flowDynamic para capturar la respuesta
+                                            // Usar WebChatManager y WebChatSession para gestionar la sesión webchat
+                                            // Usar un Set para evitar duplicados y asegurar acumulación en recursividad
+                                            const replyChunksSet = new Set();
                                             const flowDynamic = async (arr) => {
+                                                const filtrarAPI = (txt) => txt && typeof txt === 'string' && !/\[API\][\s\S]*?\[\/API\]/.test(txt) && txt.trim().length > 0;
                                                 if (Array.isArray(arr)) {
-                                                    replyText = arr.map(a => a.body).join('\n');
-                                                } else if (typeof arr === 'string') {
-                                                    replyText = arr;
+                                                    for (const a of arr) {
+                                                        if (a && typeof a.body === 'string' && filtrarAPI(a.body)) replyChunksSet.add(a.body.trim());
+                                                    }
+                                                } else if (typeof arr === 'string' && filtrarAPI(arr)) {
+                                                    replyChunksSet.add(arr.trim());
                                                 }
                                             };
-                                                // Usar WebChatManager y WebChatSession para gestionar la sesión webchat
-                                                const { getOrCreateThreadId, sendMessageToThread, deleteThread } = await import('./utils-web/openaiThreadBridge');
-                                                const session = webChatManager.getSession(ip);
-                                                if (message.trim().toLowerCase() === "#reset" || message.trim().toLowerCase() === "#cerrar") {
-                                                    await deleteThread(session);
-                                                    session.clear();
-                                                    replyText = "🔄 El chat ha sido reiniciado. Puedes comenzar una nueva conversación.";
-                                                } else {
-                                                    session.addUserMessage(message);
-                                                    const threadId = await getOrCreateThreadId(session);
-                                                    const reply = await sendMessageToThread(threadId, message, ASSISTANT_ID);
-                                                    session.addAssistantMessage(reply);
-                                                    replyText = reply;
+                                            const { getOrCreateThreadId, sendMessageToThread, deleteThread } = await import('./utils-web/openaiThreadBridge');
+                                            const session = webChatManager.getSession(ip);
+                                            if (message.trim().toLowerCase() === "#reset" || message.trim().toLowerCase() === "#cerrar") {
+                                                await deleteThread(session);
+                                                session.clear();
+                                                replyChunksSet.add("🔄 El chat ha sido reiniciado. Puedes comenzar una nueva conversación.");
+                                            } else {
+                                                session.addUserMessage(message);
+                                                const threadId = await getOrCreateThreadId(session);
+                                                const reply = await sendMessageToThread(threadId, message, ASSISTANT_ID);
+                                                session.addAssistantMessage(reply);
+                                                // Procesar SIEMPRE la respuesta del asistente
+                                                let bloqueoSoloPrimeraAPI = false;
+                                                const flowDynamicProxy = async (arr) => {
+                                                    const filtrarAPI = (txt) => txt && typeof txt === 'string' && !/\[API\][\s\S]*?\[\/API\]/.test(txt) && txt.trim().length > 0;
+                                                    // Bloquear solo la PRIMERA llamada con resultado crudo de API
+                                                    if (!bloqueoSoloPrimeraAPI && arr && Array.isArray(arr) && arr.length === 1 && arr[0].body && (arr[0].body.includes('No se encontraron resultados para la búsqueda.') || arr[0].body.includes('Ocurrió un error al buscar el producto.') || arr[0].body.startsWith('{'))) {
+                                                        bloqueoSoloPrimeraAPI = true;
+                                                        return; // NO agregar este mensaje al usuario
+                                                    }
+                                                    // Todas las siguientes (del asistente) sí se agregan, pero nunca [API]...
+                                                    if (Array.isArray(arr)) {
+                                                        for (const a of arr) {
+                                                            if (a && typeof a.body === 'string' && filtrarAPI(a.body)) replyChunksSet.add(a.body.trim());
+                                                        }
+                                                    } else if (typeof arr === 'string' && filtrarAPI(arr)) {
+                                                        replyChunksSet.add(arr.trim());
+                                                    }
+                                                };
+                                                await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                                                    reply,
+                                                    ctx,
+                                                    flowDynamicProxy,
+                                                    session,
+                                                    undefined,
+                                                    () => {},
+                                                    async (...args) => await sendMessageToThread(threadId, args[1], ASSISTANT_ID),
+                                                    ASSISTANT_ID
+                                                );
+                                                // Si NO hubo bloque API ni respuesta acumulada, mostrar la última respuesta del asistente (plana o recursiva)
+                                                if (!replyChunksSet.size) {
+                                                    if (typeof reply === 'string' && reply.trim().length > 0) {
+                                                        replyChunksSet.add(reply.trim());
+                                                    } else if (reply !== null && reply && typeof reply === 'object' && 'text' in reply && typeof (reply as any).text === 'string' && (reply as any).text.trim().length > 0) {
+                                                        replyChunksSet.add((reply as any).text.trim());
+                                                    }
+                                                }
                                             }
                                             res.setHeader('Content-Type', 'application/json');
+                                            const replyText = Array.from(replyChunksSet).join('\n');
                                             res.end(JSON.stringify({ reply: replyText }));
                                         } catch (err) {
                                             console.error('Error en /webchat-api:', err); // debug

@@ -1,26 +1,25 @@
-// src/utils/JsonBlockFinder.ts
-
 export class JsonBlockFinder {
-    // Tipos válidos para este repositorio
-    static tiposValidos = [
-        "API1",
-        "API2",
-        "API3",
-        "API4"
-    ];
-
     static buscarBloquesJSONEnTexto(texto: string): any | null {
-        // 1. Buscar bloques entre etiquetas [API]...[/API]
-        const apiRegex = /\[API\]([\s\S]*?)\[\/API\]/g;
-        let match;
-        while ((match = apiRegex.exec(texto)) !== null) {
-            try {
-                const parsed = JSON.parse(match[1]);
-                if (JsonBlockFinder.tiposValidos.includes(parsed.type)) {
-                    return parsed;
+        // 1. Buscar bloques entre etiquetas [JSON-BUSCAR_PRODUCTO], [JSON-BUSCAR_CLIENTE], [JSON-ALTA_CLIENTE], [JSON-TOMA_PEDIDO]
+        const etiquetas = [
+            { tag: 'JSON-BUSCAR_PRODUCTO', type: '#BUSCAR_PRODUCTO#' },
+            { tag: 'JSON-BUSCAR_CLIENTE', type: '#BUSCAR_CLIENTE#' },
+            { tag: 'JSON-ALTA_CLIENTE', type: '#ALTA_CLIENTE#' },
+            { tag: 'JSON-TOMA_PEDIDO', type: '#TOMA_PEDIDO#' }
+        ];
+        for (const { tag, type } of etiquetas) {
+            // Corregido: buscar etiquetas literales [JSON-RESERVA], etc.
+                const regex = new RegExp(`\\[${tag}\\]([\\s\\S]*?)\\[/${tag}\\]`, 'g');
+            let match;
+            while ((match = regex.exec(texto)) !== null) {
+                try {
+                    const parsed = JSON.parse(match[1]);
+                    if (parsed.type === type) {
+                        return parsed;
+                    }
+                } catch (e) {
+                    // No es JSON válido, sigue buscando
                 }
-            } catch (e) {
-                // No es JSON válido, sigue buscando
             }
         }
         // 2. Buscar bloques JSON sueltos en el texto
@@ -28,7 +27,7 @@ export class JsonBlockFinder {
         for (const block of bloques) {
             try {
                 const parsed = JSON.parse(block);
-                if (JsonBlockFinder.tiposValidos.includes(parsed.type)) {
+                if (["#BUSCAR_PRODUCTO#", "#BUSCAR_CLIENTE#", "#ALTA_CLIENTE#", "#TOMA_PEDIDO#"].includes(parsed.type)) {
                     return parsed;
                 }
             } catch (e) {
@@ -49,6 +48,6 @@ export class JsonBlockFinder {
                 if (encontrado) return encontrado;
             }
         }
-          return null;
+        return null;
     }
-}   
+}

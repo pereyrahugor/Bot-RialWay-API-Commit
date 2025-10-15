@@ -1,26 +1,56 @@
-// src/utils/AssistantResponseProcessor.ts
-// Ajustar fecha/hora a GMT-3 (hora argentina)
-function toArgentinaTime(fechaReservaStr: string): string {
-    const [fecha, hora] = fechaReservaStr.split(' ');
-    const [anio, mes, dia] = fecha.split('-').map(Number);
-    const [hh, min] = hora.split(':').map(Number);
-    const date = new Date(Date.UTC(anio, mes - 1, dia, hh, min));
-    date.setHours(date.getHours() - 3);
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
-    const hhh = String(date.getHours()).padStart(2, '0');
-    const mmm = String(date.getMinutes()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd} ${hhh}:${mmm}`;
-}
 import { JsonBlockFinder } from "../API/JsonBlockFinder";
-// importar endpoint de la api y sus metodos
-//import { checkAvailability, createReservation, updateReservationById, cancelReservationById } from "../API";
+import { searchProduct } from "../API/Commit";
 import fs from 'fs';
 import moment from 'moment';
 
 function limpiarBloquesJSON(texto: string): string {
     return texto.replace(/\[API\][\s\S]*?\[\/API\]/g, "");
+}
+
+// Ajustar fecha/hora a GMT-3 (hora argentina)
+// function toArgentinaTime(fechaReservaStr: string): string {
+//     const [fecha, hora] = fechaReservaStr.split(' ');
+//     const [anio, mes, dia] = fecha.split('-').map(Number);
+//     const [hh, min] = hora.split(':').map(Number);
+//     const date = new Date(Date.UTC(anio, mes - 1, dia, hh, min));
+//     date.setHours(date.getHours() - 3);
+//     const yyyy = date.getFullYear();
+//     const mm = String(date.getMonth() + 1).padStart(2, '0');
+//     const dd = String(date.getDate()).padStart(2, '0');
+//     const hhh = String(date.getHours()).padStart(2, '0');
+//     const mmm = String(date.getMinutes()).padStart(2, '0');
+//     return `${yyyy}-${mm}-${dd} ${hhh}:${mmm}`;
+// }
+
+// function corregirFechaAnioVigente(fechaReservaStr: string): string {
+// function toArgentinaTime(fechaReservaStr: string): string {
+//     // Recibe 'YYYY-MM-DD HH:mm' y ajusta a GMT-3
+//     const [fecha, hora] = fechaReservaStr.split(' ');
+//     const [anio, mes, dia] = fecha.split('-').map(Number);
+//     const [hh, min] = hora.split(':').map(Number);
+//     // Construir fecha en UTC y restar 3 horas
+//     const date = new Date(Date.UTC(anio, mes - 1, dia, hh, min));
+//     date.setHours(date.getHours() - 3);
+//     const yyyy = date.getFullYear();
+//     const mm = String(date.getMonth() + 1).padStart(2, '0');
+//     const dd = String(date.getDate()).padStart(2, '0');
+//     const hhh = String(date.getHours()).padStart(2, '0');
+//     const mmm = String(date.getMinutes()).padStart(2, '0');
+//     return `${yyyy}-${mm}-${dd} ${hhh}:${mmm}`;
+// }
+//     const ahora = new Date();
+//     const vigente = ahora.getFullYear();
+//     const [fecha, hora] = fechaReservaStr.split(" ");
+//     const [anioRaw, mes, dia] = fecha.split("-").map(Number);
+//     let anio = anioRaw;
+//     if (anio < vigente) anio = vigente;
+//     return `${anio.toString().padStart(4, "0")}-${mes.toString().padStart(2, "0")}-${dia.toString().padStart(2, "0")} ${hora}`;
+// }
+
+function esFechaFutura(fechaReservaStr: string): boolean {
+    const ahora = new Date();
+    const fechaReserva = new Date(fechaReservaStr.replace(" ", "T"));
+    return fechaReserva >= ahora;
 }
 
 export class AssistantResponseProcessor {
@@ -61,12 +91,11 @@ export class AssistantResponseProcessor {
                 jsonData = null;
                 if (ctx && ctx.type === 'webchat') {
                     console.log('[Webchat Debug] Error al parsear bloque [API]:', jsonStr);
-                    }
                 }
             }
+        }
 
-  // 2) Fallback heurístico (desactivado, solo [API])
-        // jsonData = null;
+        // 2) Fallback heurístico (desactivado, solo [API])
         if (!jsonData) {
             jsonData = JsonBlockFinder.buscarBloquesJSONEnTexto(textResponse) || (typeof response === "object" ? JsonBlockFinder.buscarBloquesJSONProfundo(response) : null);
             if (!jsonData && ctx && ctx.type === 'webchat') {
@@ -81,34 +110,96 @@ export class AssistantResponseProcessor {
                 console.log('[WhatsApp Debug] Antes de enviar con flowDynamic:', jsonData, ctx.from);
             }
             const tipo = jsonData.type.trim();
-            switch (tipo) {
-                case "#API1#":
-                    console.log('[API Debug] Llamada a API1');
-                    break;
-                case "#API2#":
-                    console.log('[API Debug] Llamada a API2');
-                    break;
-                case "#API3#":
-                    console.log('[API Debug] Llamada a API3');
-                    break;
-                case "#API4#":
-                    console.log('[API Debug] Llamada a API4');
-                    break;
-                default:
-                    console.log('[API Debug] Tipo de API desconocido:', tipo);
-            }
-        }
-        // Limpiar y enviar el texto tal cual, sin lógica especial
-        const cleanTextResponse = limpiarBloquesJSON(textResponse).trim();
-        if (cleanTextResponse.length > 0) {
-            try {
-                await flowDynamic([{ body: cleanTextResponse }]);
-                if (ctx && ctx.type !== 'webchat') {
-                    console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
+
+            if (tipo === "#BUSCAR_PRODUCTO#") {
+                try {
+                    const payload = jsonData.payload || jsonData.data || {};
+                    const result = await searchProduct(payload);
+                    console.log("Resultado de searchProduct:", result);
+                    // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
+                    let apiResultText = (result && result.data)
+                        ? JSON.stringify(result.data)
+                        : "No se encontraron resultados para la búsqueda.";
+                    // Llamar al asistente con el resultado de la API
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(
+                            ASSISTANT_ID,
+                            apiResultText,
+                            state,
+                            undefined,
+                            ctx.from,
+                            ctx.from
+                        );
+                        // Procesar la respuesta final del asistente (puede contener [API] anidados)
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                            respuestaAsistente,
+                            ctx,
+                            flowDynamic,
+                            state,
+                            provider,
+                            gotoFlow,
+                            getAssistantResponse,
+                            ASSISTANT_ID
+                        );
+                        return; // Importante: no continuar con el flujo normal después de la recursividad
+                    } else {
+                        // Fallback: mostrar el resultado plano si no hay getAssistantResponse
+                        await flowDynamic([{ body: apiResultText }]);
+                        return;
+                    }
+                } catch (err) {
+                    console.error("Error al ejecutar searchProduct:", err);
+                    await flowDynamic([{ body: "Ocurrió un error al buscar el producto." }]);
+                    return;
                 }
-            } catch (err) {
-                console.error('[WhatsApp Debug] Error en flowDynamic:', err);
+            } else if (tipo === "#BUSCAR_CLIENTE#") {
+                // Implementar lógica para buscar cliente si es necesario
+            } else if (tipo === "#ALTA_CLIENTE#") {
+                // Implementar lógica para alta cliente si es necesario
+            } else if (tipo === "#TOMA_PEDIDO#") {
+                // Implementar lógica para toma pedido si es necesario
             }
         }
-    }   
+
+        // Si no hubo bloque JSON válido, o después de procesar cualquier flujo, enviar el texto limpio
+        const cleanTextResponse = limpiarBloquesJSON(textResponse).trim();
+        // Lógica especial para reserva: espera y reintento
+        if (cleanTextResponse.includes('Voy a proceder a realizar la reserva.')) {
+            // Espera 30 segundos y responde ok al asistente
+            await new Promise(res => setTimeout(res, 30000));
+            let assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, ctx.from);
+            // Si la respuesta contiene (ID: ...), no la envíes al usuario, espera 10s y vuelve a enviar ok
+            while (assistantApiResponse && /(ID:\s*\w+)/.test(assistantApiResponse)) {
+                console.log('[Debug] Respuesta contiene ID de reserva, esperando 10s y reenviando ok...');
+                await new Promise(res => setTimeout(res, 10000));
+                assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, ctx.from);
+            }
+            // Cuando la respuesta no contiene el ID, envíala al usuario
+            if (assistantApiResponse) {
+                try {
+                    await flowDynamic([{ body: limpiarBloquesJSON(String(assistantApiResponse)).trim() }]);
+                    if (ctx && ctx.type !== 'webchat') {
+                        console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
+                    }
+                } catch (err) {
+                    console.error('[WhatsApp Debug] Error en flowDynamic:', err);
+                }
+            }
+        } else if (cleanTextResponse.length > 0) {
+            const chunks = cleanTextResponse.split(/\n\n+/);
+            for (const chunk of chunks) {
+                if (chunk.trim().length > 0) {
+                    try {
+                        await flowDynamic([{ body: chunk.trim() }]);
+                        if (ctx && ctx.type !== 'webchat') {
+                            console.log('[WhatsApp Debug] flowDynamic ejecutado correctamente');
+                        }
+                    } catch (err) {
+                        console.error('[WhatsApp Debug] Error en flowDynamic:', err);
+                    }
+                }
+            }
+        }
+    }
 }
+
