@@ -1,3 +1,13 @@
+// Type guard to check if reply is an object with a non-empty string 'text' property
+function isReplyWithText(reply: any): reply is { text: string } {
+    return (
+        reply !== null &&
+        typeof reply === 'object' &&
+        'text' in reply &&
+        typeof reply.text === 'string' &&
+        reply.text.trim().length > 0
+    );
+}
 // ...existing imports y lógica del bot...
 import "dotenv/config";
 import path from 'path';
@@ -463,8 +473,8 @@ const main = async () => {
                                                 if (!replyChunksSet.size) {
                                                     if (typeof reply === 'string' && reply.trim().length > 0) {
                                                         replyChunksSet.add(reply.trim());
-                                                    } else if (reply !== null && reply && typeof reply === 'object' && 'text' in reply && typeof (reply as any).text === 'string' && (reply as any).text.trim().length > 0) {
-                                                        replyChunksSet.add((reply as any).text.trim());
+                                                    } else if (isReplyWithText(reply)) {
+                                                        replyChunksSet.add(reply.text.trim());
                                                     }
                                                 }
                                             }
