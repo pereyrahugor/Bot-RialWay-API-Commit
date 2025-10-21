@@ -117,9 +117,16 @@ export class AssistantResponseProcessor {
                     const result = await searchProduct(payload);
                     console.log("Resultado de searchProduct:", result);
                     // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
-                    const apiResultText = (result && result.data)
-                        ? JSON.stringify(result.data)
-                        : "No se encontraron resultados para la búsqueda.";
+                    let apiResultText;
+                    if (result && result.data) {
+                        if (Array.isArray(result.data)) {
+                            apiResultText = JSON.stringify(result.data.slice(0, 10));
+                        } else {
+                            apiResultText = JSON.stringify(result.data);
+                        }
+                    } else {
+                        apiResultText = "No se encontraron resultados para la búsqueda.";
+                    }
                     // Llamar al asistente con el resultado de la API
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
                         const respuestaAsistente = await getAssistantResponse(
