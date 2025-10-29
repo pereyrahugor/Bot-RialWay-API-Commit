@@ -1,5 +1,6 @@
 import { JsonBlockFinder } from "../API/JsonBlockFinder";
 import { searchProduct } from "../API/Commit";
+import { searchClient } from "../API/Commit";
 import fs from 'fs';
 import moment from 'moment';
 
@@ -160,7 +161,53 @@ export class AssistantResponseProcessor {
                     return;
                 }
             } else if (tipo === "#BUSCAR_CLIENTE#") {
-                // Implementar lógica para buscar cliente si es necesario
+                try {
+                    const payload = jsonData.payload || jsonData.data || {};
+                    const result = await searchClient(payload);
+                    console.log("Resultado de searchClient:", result);
+                    // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
+                    let apiResultText;
+                    if (result && result.data) {
+                        if (Array.isArray(result.data)) {
+                            apiResultText = JSON.stringify(result.data.slice(0, 10));
+                        } else {
+                            apiResultText = JSON.stringify(result.data);
+                        }
+                    } else {
+                        apiResultText = "No se encontraron resultados para la búsqueda.";
+                    }
+                    // Llamar al asistente con el resultado de la API
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(
+                            ASSISTANT_ID,
+                            apiResultText,
+                            state,
+                            undefined,
+                            ctx.from,
+                            ctx.from
+                        );
+                        // Procesar la respuesta final del asistente (puede contener [API] anidados)
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                            respuestaAsistente,
+                            ctx,
+                            flowDynamic,
+                            state,
+                            provider,
+                            gotoFlow,
+                            getAssistantResponse,
+                            ASSISTANT_ID
+                        );
+                        return; // Importante: no continuar con el flujo normal después de la recursividad
+                    } else {
+                        // Fallback: mostrar el resultado plano si no hay getAssistantResponse
+                        await flowDynamic([{ body: apiResultText }]);
+                        return;
+                    }
+                } catch (err) {
+                    console.error("Error al ejecutar searchClient:", err);
+                    await flowDynamic([{ body: "Ocurrió un error al buscar el cliente." }]);
+                    return;
+                }
             } else if (tipo === "#ALTA_CLIENTE#") {
                 // Implementar lógica para alta cliente si es necesario
             } else if (tipo === "#TOMA_PEDIDO#") {

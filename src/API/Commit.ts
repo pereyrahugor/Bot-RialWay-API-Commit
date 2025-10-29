@@ -22,3 +22,17 @@ export const searchProduct = async (data) => {
     );
     return response.data;
 };
+
+export const searchClient = async (data) => {
+    const body = {
+        cuit: cuit,
+        email: email,
+        password: password,
+        data: data
+    };
+    const response = await axios.post(
+        `${BASE_URL}/clientes/searchclient`,
+        body
+    );
+    return response.data;
+};
