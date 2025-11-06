@@ -261,7 +261,7 @@ export class AssistantResponseProcessor {
                     if (payload) {
                         payload = {
                             dni_o_Cuit: payload.dni_o_Cuit || payload.dni || payload.cuit || "",
-                            codigo: "", // Siempre vacío
+                            codigo: payload.codigo || null, 
                             razonSocial_o_ApellidoNombre: payload.razonSocial_o_ApellidoNombre || payload.razonSocial || payload.apellidoNombre || payload.nombre || "",
                             domicilio: payload.domicilio || "",
                             localidad: payload.localidad || "",

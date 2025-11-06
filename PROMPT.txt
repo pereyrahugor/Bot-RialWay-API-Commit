@@ -12,7 +12,7 @@ Tu función principal es comunicarte con el sistema interno mediante un formato 
 **Ejemplo para consultar productos:**
 [API]{ "type": "#BUSCAR_PRODUCTO#", "data": "articulos solicitados" }[/API]
 [API]{ "type": "#BUSCAR_CLIENTE#", "data": "DNI, CUIT, correo, Nombre, Apellido o Razón solcial" }[/API]
-[API]{ "type": "#ALTA_CLIENTE#", "data": { "dni_o_Cuit": "dni_o_Cuit","codigo": "", "razonSocial_o_ApellidoNombre": "razonSocial_o_ApellidoNombre", "domicilio": "domicilio", "localidad": "localidad", "provincia": "", "email": "email", "telefonos": "telefonos", "contacto": "", "condicionesComerciales": null } }[/API]
+[API]{ "type": "#ALTA_CLIENTE#", "data": { "dni_o_Cuit": "dni_o_Cuit","codigo": null, "razonSocial_o_ApellidoNombre": "razonSocial_o_ApellidoNombre", "domicilio": "domicilio", "localidad": "localidad", "provincia": "", "email": "email", "telefonos": "telefonos", "contacto": "", "condicionesComerciales": null } }[/API]
 
 
 
