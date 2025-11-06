@@ -36,3 +36,17 @@ export const searchClient = async (data) => {
     );
     return response.data;
 };
+
+export const createClient = async (data) => {
+    const body = {
+        cuit: cuit,
+        email: email,
+        password: password,
+        data: data // Los datos recibidos se envían directamente dentro de 'data'
+    };
+    const response = await axios.post(
+        `${BASE_URL}/clientes/newclient`,
+        body
+    );
+    return response.data;
+};

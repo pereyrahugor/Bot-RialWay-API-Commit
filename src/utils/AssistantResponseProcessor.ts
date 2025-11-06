@@ -157,7 +157,30 @@ export class AssistantResponseProcessor {
                     }
                 } catch (err) {
                     console.error("Error al ejecutar searchProduct:", err);
-                    await flowDynamic([{ body: "Ocurrió un error al buscar el producto." }]);
+                    // Enviar el error al asistente y mostrar solo la respuesta natural
+                    let errorMsg = "Ocurrió un error al buscar el producto.";
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(
+                            ASSISTANT_ID,
+                            errorMsg,
+                            state,
+                            undefined,
+                            ctx.from,
+                            ctx.from
+                        );
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                            respuestaAsistente,
+                            ctx,
+                            flowDynamic,
+                            state,
+                            provider,
+                            gotoFlow,
+                            getAssistantResponse,
+                            ASSISTANT_ID
+                        );
+                    } else {
+                        await flowDynamic([{ body: errorMsg }]);
+                    }
                     return;
                 }
             } else if (tipo === "#BUSCAR_CLIENTE#") {
@@ -205,11 +228,117 @@ export class AssistantResponseProcessor {
                     }
                 } catch (err) {
                     console.error("Error al ejecutar searchClient:", err);
-                    await flowDynamic([{ body: "Ocurrió un error al buscar el cliente." }]);
+                    let errorMsg = "Ocurrió un error al buscar el cliente.";
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(
+                            ASSISTANT_ID,
+                            errorMsg,
+                            state,
+                            undefined,
+                            ctx.from,
+                            ctx.from
+                        );
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                            respuestaAsistente,
+                            ctx,
+                            flowDynamic,
+                            state,
+                            provider,
+                            gotoFlow,
+                            getAssistantResponse,
+                            ASSISTANT_ID
+                        );
+                    } else {
+                        await flowDynamic([{ body: errorMsg }]);
+                    }
                     return;
                 }
             } else if (tipo === "#ALTA_CLIENTE#") {
-                // Implementar lógica para alta cliente si es necesario
+                try {
+                    let payload = jsonData.payload || jsonData.data || {};
+                    // Normalizar campos para la API (ejemplo: convertir nombres de campos si es necesario)
+                    // Puedes adaptar este mapeo según los requerimientos reales de la API
+                    if (payload) {
+                        payload = {
+                            dni_o_Cuit: payload.dni_o_Cuit || payload.dni || payload.cuit || "",
+                            codigo: "", // Siempre vacío
+                            razonSocial_o_ApellidoNombre: payload.razonSocial_o_ApellidoNombre || payload.razonSocial || payload.apellidoNombre || payload.nombre || "",
+                            domicilio: payload.domicilio || "",
+                            localidad: payload.localidad || "",
+                            provincia: payload.provincia || "",
+                            email: payload.email || "",
+                            telefonos: payload.telefonos || payload.telefono || "",
+                            contacto: payload.contacto || "",
+                            condicionesComerciales: payload.condicionesComerciales || null
+                        };
+                    }
+                    const result = await import("../API/Commit").then(m => m.createClient(payload));
+                    console.log("Resultado de createClient:", result);
+                    // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
+                    let apiResultText;
+                    if (result && result.data) {
+                        if (Array.isArray(result.data)) {
+                            apiResultText = JSON.stringify(result.data.slice(0, 10));
+                        } else {
+                            apiResultText = JSON.stringify(result.data);
+                        }
+                    } else {
+                        apiResultText = "No se pudo crear el cliente.";
+                    }
+                    // Llamar al asistente con el resultado de la API
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(
+                            ASSISTANT_ID,
+                            apiResultText,
+                            state,
+                            undefined,
+                            ctx.from,
+                            ctx.from
+                        );
+                        // Procesar la respuesta final del asistente (puede contener [API] anidados)
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                            respuestaAsistente,
+                            ctx,
+                            flowDynamic,
+                            state,
+                            provider,
+                            gotoFlow,
+                            getAssistantResponse,
+                            ASSISTANT_ID
+                        );
+                        return; // Importante: no continuar con el flujo normal después de la recursividad
+                    } else {
+                        // Fallback: mostrar el resultado plano si no hay getAssistantResponse
+                        await flowDynamic([{ body: apiResultText }]);
+                        return;
+                    }
+                } catch (err) {
+                    console.error("Error al ejecutar createClient:", err);
+                    let errorMsg = "Ocurrió un error al crear el cliente.";
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(
+                            ASSISTANT_ID,
+                            errorMsg,
+                            state,
+                            undefined,
+                            ctx.from,
+                            ctx.from
+                        );
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+                            respuestaAsistente,
+                            ctx,
+                            flowDynamic,
+                            state,
+                            provider,
+                            gotoFlow,
+                            getAssistantResponse,
+                            ASSISTANT_ID
+                        );
+                    } else {
+                        await flowDynamic([{ body: errorMsg }]);
+                    }
+                    return;
+                }
             } else if (tipo === "#TOMA_PEDIDO#") {
                 // Implementar lógica para toma pedido si es necesario
             }
