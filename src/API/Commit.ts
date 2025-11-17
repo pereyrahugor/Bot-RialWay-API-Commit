@@ -50,3 +50,17 @@ export const createClient = async (data) => {
     );
     return response.data;
 };
+
+export const createOrder = async (data) => {
+    const body = {
+        cuit: cuit,
+        email: email,
+        password: password,
+        data: data
+    };
+    const response = await axios.post(
+        `${BASE_URL}/pedidos/neworder`,
+        body
+    );
+    return response.data;
+};
