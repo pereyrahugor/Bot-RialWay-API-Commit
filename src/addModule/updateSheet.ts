@@ -7,21 +7,13 @@ import * as glob from "glob";
 
 dotenv.config();
 
-// Variables de entorno para la hoja de cálculo y el vector store
-const SHEET_ID = process.env.SHEET_ID_UPDATE_3 ?? "";
-const SHEET_NAME_RAW = process.env.SHEET_NAME_UPDATE_3 ?? "";
+// Permitir múltiples IDs separados por coma y espacios
+const SHEET_IDS = (process.env.SHEET_ID_UPDATE || "")
+    .split(",")
+    .map(id => id.trim())
+    .filter(Boolean);
 const VECTOR_STORE_ID = process.env.VECTOR_STORE_ID ?? "";
-// Si SHEET_NAME_RAW no contiene '!', agregar '!A1' para el range
-const SHEET_RANGE = SHEET_NAME_RAW && !SHEET_NAME_RAW.includes('!') ? `${SHEET_NAME_RAW}!A1` : SHEET_NAME_RAW;
-// Para archivos, solo usar el nombre de la hoja (sin !A1)
-const SHEET_NAME = SHEET_NAME_RAW.replace(/!.*/, "");
-const TXT_PATH = path.join("temp", `${SHEET_NAME}.json`);
 let currentFileId: string | null = null;
-
-// Verificar que las variables de entorno estén definidas
-if (!SHEET_ID || !SHEET_NAME) {
-    throw new Error("❌ Las variables de entorno SHEET_ID_UPDATE_3 y SHEET_NAME_UPDATE_3 deben estar definidas.");
-}
 
 // Construir credenciales desde variables de entorno
 const credentials = {
@@ -37,11 +29,23 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 const openai = new OpenAI();
 
-// Función para obtener datos de Google Sheets
-export async function updateSheet3() {
-    try {
-        console.log("📌 Obteniendo datos de Google Sheets...");
+// Función principal para procesar todos los sheets
+export async function updateAllSheets() {
+    for (const SHEET_ID of SHEET_IDS) {
+        await processSheetById(SHEET_ID);
+    }
+}
 
+// Procesa un sheet por ID, obtiene el nombre real y ejecuta la lógica
+async function processSheetById(SHEET_ID: string) {
+    try {
+        // Obtener metadatos para el nombre real de la hoja principal
+        const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+        const sheetTitle = meta.data.sheets?.[0]?.properties?.title || "Sheet1";
+        const SHEET_NAME = sheetTitle;
+        const TXT_PATH = path.join("temp", `${SHEET_NAME}.json`);
+
+        console.log(`📌 Obteniendo datos de Google Sheets: ${SHEET_ID} (${SHEET_NAME})`);
 
         // Paso 1: Obtener un rango grande para detectar la última fila y columna con datos
         const initialRange = `${SHEET_NAME}!A1:ZZ10000`;
@@ -51,7 +55,6 @@ export async function updateSheet3() {
         });
 
         const rows = response.data.values;
-        console.log("[DEBUG] rows:", JSON.stringify(rows));
         if (!rows || rows.length === 0) {
             console.warn("⚠️ No se encontraron datos en la hoja de cálculo.");
             return [];
@@ -62,7 +65,6 @@ export async function updateSheet3() {
         let lastCol = 0;
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
-            // Si la fila está completamente vacía, no la contamos como parte del rango
             if (!row || row.every(cell => (cell === undefined || cell === null || String(cell).trim() === ""))) {
                 lastRow = i;
                 break;
@@ -70,6 +72,7 @@ export async function updateSheet3() {
             if (row.length > lastCol) lastCol = row.length;
         }
         if (lastCol === 0) lastCol = 1;
+
         // Convertir número de columna a letra
         const colToLetter = (col: number) => {
             let temp = "";
@@ -83,7 +86,6 @@ export async function updateSheet3() {
         };
         const lastColLetter = colToLetter(lastCol);
         const dynamicRange = `${SHEET_NAME}!A1:${lastColLetter}${lastRow}`;
-        console.log(`[DEBUG] dynamicRange: ${dynamicRange}`);
 
         // Volver a pedir los datos usando el rango exacto
         const fullResponse = await sheets.spreadsheets.values.get({
@@ -97,48 +99,65 @@ export async function updateSheet3() {
         }
         // Validar headers
         const headers = fullRows[0].map((h: string) => (h || "").trim());
-        console.log("[DEBUG] headers:", headers);
         const validHeaders = headers.filter(h => h.length > 0);
         if (validHeaders.length === 0) {
             console.warn("⚠️ La primera fila no contiene encabezados válidos.");
             return [];
         }
-        // Formatear los datos obtenidos de forma flexible
+
+        // Formatear los datos obtenidos de forma flexible, convirtiendo valores numéricos
         const formattedData = fullRows.slice(1)
             .filter(row => row && row.length > 0 && row.some(cell => (cell || "").trim() !== ""))
             .map((row) => {
-                const obj: Record<string, string> = {};
+                const obj: Record<string, any> = {};
                 headers.forEach((header, idx) => {
-                    obj[header] = (row[idx] || "").trim();
+                    let value = (row[idx] || "").trim();
+                    // Si el valor parece un número (con o sin formato de moneda), convertir a number
+                    if (/^\$?\s*[\d.,]+$/.test(value)) {
+                        value = value.replace(/[^\d,]/g, "");
+                        if (value.includes(",")) {
+                            value = value.replace(/\./g, "");
+                            value = value.replace(/,/, ".");
+                        }
+                        const num = Number(value);
+                        obj[header] = isNaN(num) ? value : num;
+                    } else {
+                        // Si el valor contiene comas y al menos dos elementos, convertir a array
+                        if (typeof value === "string" && value.includes(",")) {
+                            const arr = value.split(",").map(v => v.trim()).filter(v => v.length > 0);
+                            if (arr.length > 1) {
+                                obj[header] = arr;
+                            } else {
+                                obj[header] = value;
+                            }
+                        } else {
+                            obj[header] = value;
+                        }
+                    }
                 });
                 return obj;
             });
 
-        console.log("[DEBUG] formattedData:", formattedData);
-        console.log("✅ Datos obtenidos.");
-
-        // Verificar que la carpeta "temp/data" exista
+        // Verificar que la carpeta "temp" exista
         const dirPath = path.join("temp");
         if (!fs.existsSync(dirPath)) {
             fs.mkdirSync(dirPath, { recursive: true });
-            console.log(`📂 Carpeta creada: ${dirPath}`);
         }
 
         // Guardar los datos en un archivo de texto en formato JSON simple
         const jsonData = JSON.stringify(formattedData, null, 2);
         fs.writeFileSync(TXT_PATH, jsonData, "utf8");
-
-    console.log(`📂 Datos guardados en archivo de texto: ${TXT_PATH}`);
+        console.log(`📂 Datos guardados en archivo de texto: ${TXT_PATH}`);
 
         // Enviar el archivo de texto al vector store
-    const success = await uploadDataToAssistant(TXT_PATH, "newStateId");
+        const success = await uploadDataToAssistant(TXT_PATH, SHEET_ID);
         if (!success) {
             console.error("❌ Error al enviar los datos al vector store.");
         }
 
         return formattedData;
     } catch (error) {
-    console.error("❌ Error al obtener datos:", error.message);
+        console.error("❌ Error al obtener datos:", error.message);
         return null;
     }
 }
@@ -146,41 +165,26 @@ export async function updateSheet3() {
 // Función para subir datos al vector store de OpenAI
 export async function uploadDataToAssistant(filePath: string, stateId: string) {
     try {
-        // Verificar si el archivo actual está en uso
         if (currentFileId && stateId === currentFileId) {
             console.log("📂 Utilizando archivo existente con ID:", currentFileId);
             return true;
         }
-
-        // Eliminar archivos anteriores
-        await deleteOldFiles();
-
+        await deleteOldFiles(filePath);
         console.log("🚀 Subiendo archivo al vector store...");
-
-        // Subir el archivo al vector store
         const fileStream = fs.createReadStream(filePath);
         const response = await openai.files.create({
             file: fileStream,
             purpose: "assistants"
         });
-
         currentFileId = response.id;
         console.log(`📂 Archivo subido con ID: ${currentFileId}`);
-
-        // Adjuntar el nuevo archivo al vector store
         const success = await attachFileToVectorStore(currentFileId);
         if (!success) {
             return false;
         }
-
-        // Eliminar archivos temporales
-        deleteTemporaryFiles();
-
+        deleteTemporaryFiles(filePath);
         console.log("✅ Datos actualizados en el vector store.");
-
-        // Agregar un delay antes de continuar
-        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 segundos de delay
-
+        await new Promise(resolve => setTimeout(resolve, 2000));
         return true;
     } catch (error) {
         console.error("❌ Error al subir el archivo al vector store:", error.message);
@@ -188,14 +192,12 @@ export async function uploadDataToAssistant(filePath: string, stateId: string) {
     }
 }
 
-// Función para adjuntar un archivo al vector store de OpenAI
 async function attachFileToVectorStore(fileId: string) {
     try {
         console.log(`📡 Adjuntando archivo al vector store: ${fileId}`);
         const response = await openai.vectorStores.fileBatches.createAndPoll(VECTOR_STORE_ID, {
             file_ids: [fileId]
         });
-
         if (response && response.status === "completed") {
             console.log("✅ Confirmación recibida: Archivo adjuntado correctamente al vector store.");
             return true;
@@ -209,32 +211,31 @@ async function attachFileToVectorStore(fileId: string) {
     }
 }
 
-// Función para eliminar archivos anteriores del vector store
-async function deleteOldFiles() {
+async function deleteOldFiles(filePath: string) {
     try {
-    console.log(`🗑️ Eliminando archivo anterior del vector store relacionado con ${SHEET_NAME}.json...`);
-    const files = await openai.files.list();
-    for (const file of files.data) {
-        if (file.filename === `${SHEET_NAME}.json`) {
-            await openai.files.del(file.id);
-            console.log(`🗑️ Archivo eliminado: ${file.id}`);
+        const fileName = path.basename(filePath);
+        console.log(`🗑️ Eliminando archivo anterior del vector store relacionado con ${fileName}...`);
+        const files = await openai.files.list();
+        for (const file of files.data) {
+            if (file.filename === fileName) {
+                await openai.files.del(file.id);
+                console.log(`🗑️ Archivo eliminado: ${file.id}`);
+            }
         }
-    }
     } catch (error) {
         console.error("❌ Error al eliminar archivo anterior del vector store:", error.message);
     }
 }
 
-// Función para eliminar archivos temporales
-function deleteTemporaryFiles() {
+function deleteTemporaryFiles(filePath: string) {
     try {
+        const fileName = path.basename(filePath);
         console.log("🗑️ Eliminando archivos temporales...");
-
-    const files = glob.sync(path.join("temp", `${SHEET_NAME}.json`));
-    for (const file of files) {
-        fs.unlinkSync(file);
-        console.log(`🗑️ Archivo temporal eliminado: ${file}`);
-    }
+        const files = glob.sync(path.join("temp", fileName));
+        for (const file of files) {
+            fs.unlinkSync(file);
+            console.log(`🗑️ Archivo temporal eliminado: ${file}`);
+        }
     } catch (error) {
         console.error("❌ Error al eliminar archivos temporales:", error.message);
     }
