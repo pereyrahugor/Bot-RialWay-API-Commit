@@ -1,4 +1,4 @@
-import { updateAllSheets } fro./updateSheetet";
+import { updateAllSheets } from "./updateSheet";
 import { updateAllDocs } from "./updateDoc";
 
 /**
