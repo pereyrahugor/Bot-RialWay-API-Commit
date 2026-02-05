@@ -64,3 +64,31 @@ export const createOrder = async (data) => {
     );
     return response.data;
 };
+
+export const searchProductsWithPrice = async (data) => {
+    const body = {
+        cuit: cuit,
+        email: email,
+        password: password,
+        data: data
+    };
+    const response = await axios.post(
+        `${BASE_URL}/articulos/searchproductswithprice`,
+        body
+    );
+    return response.data;
+};
+
+export const getProductByCodeWithPrice = async (data) => {
+    const body = {
+        cuit: cuit,
+        email: email,
+        password: password,
+        data: data
+    };
+    const response = await axios.post(
+        `${BASE_URL}/articulos/getproductbycodewithprice`,
+        body
+    );
+    return response.data;
+};

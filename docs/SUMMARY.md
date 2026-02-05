@@ -14,6 +14,8 @@
 
 * [📦 Módulos Internos (IA)](modulos-internos/busqueda-productos.md)
   * [🔍 Búsqueda de Productos](modulos-internos/busqueda-productos.md)
+  * [💰 Búsqueda de Productos (Lista)](modulos-internos/busqueda-producto-lista.md)
+  * [🆔 Búsqueda de Productos (Código)](modulos-internos/busqueda-codigo-lista.md)
   * [👥 Búsqueda de Clientes](modulos-internos/busqueda-clientes.md)
   * [📝 Alta de Cliente](modulos-internos/alta-cliente.md)
   * [🛒 Toma de Pedido](modulos-internos/toma-pedido.md)

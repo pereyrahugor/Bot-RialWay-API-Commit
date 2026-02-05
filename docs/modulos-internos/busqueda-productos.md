@@ -31,7 +31,7 @@ El asistente debe incluir en su respuesta un bloque JSON con el siguiente format
 4. El resultado se reinyecta al asistente de IA para que genere una respuesta natural al usuario.
 
 ## 📤 Respuesta Detallada
-El sistema comercial devuelve un objeto con la siguiente estructura (máximo 10 resultados):
+El sistema comercial devuelve un objeto con la siguiente estructura (sin límite de resultados):
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |

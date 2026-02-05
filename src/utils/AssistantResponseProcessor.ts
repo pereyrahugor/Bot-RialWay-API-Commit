@@ -1,12 +1,13 @@
 import { JsonBlockFinder } from "../API/JsonBlockFinder";
-import { searchProduct } from "../API/Commit";
-import { searchClient } from "../API/Commit";
+import { searchProduct, searchProductsWithPrice, getProductByCodeWithPrice, searchClient, createClient, createOrder } from "../API/Commit";
 import fs from 'fs';
 import moment from 'moment';
 
 function limpiarBloquesJSON(texto: string): string {
     return texto.replace(/\[API\][\s\S]*?\[\/API\]/g, "");
 }
+
+// ... (rest of the functions remain the same)
 
 // Ajustar fecha/hora a GMT-3 (hora argentina)
 // function toArgentinaTime(fechaReservaStr: string): string {
@@ -117,67 +118,100 @@ export class AssistantResponseProcessor {
                     const payload = jsonData.payload || jsonData.data || {};
                     const result = await searchProduct(payload);
                     console.log("Resultado de searchProduct:", result);
-                    // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
                     let apiResultText;
                     if (result && result.data) {
-                        if (Array.isArray(result.data)) {
-                            apiResultText = JSON.stringify(result.data.slice(0, 10));
-                        } else {
-                            apiResultText = JSON.stringify(result.data);
-                        }
+                        apiResultText = JSON.stringify(result.data);
                     } else {
                         apiResultText = "No se encontraron resultados para la búsqueda.";
                     }
-                    // Llamar al asistente con el resultado de la API
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
-                        const respuestaAsistente = await getAssistantResponse(
-                            ASSISTANT_ID,
-                            apiResultText,
-                            state,
-                            undefined,
-                            ctx.from,
-                            ctx.from
-                        );
-                        // Procesar la respuesta final del asistente (puede contener [API] anidados)
-                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                            respuestaAsistente,
-                            ctx,
-                            flowDynamic,
-                            state,
-                            provider,
-                            gotoFlow,
-                            getAssistantResponse,
-                            ASSISTANT_ID
-                        );
-                        return; // Importante: no continuar con el flujo normal después de la recursividad
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, apiResultText, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
+                        return;
                     } else {
-                        // Fallback: mostrar el resultado plano si no hay getAssistantResponse
                         await flowDynamic([{ body: apiResultText }]);
                         return;
                     }
                 } catch (err) {
                     console.error("Error al ejecutar searchProduct:", err);
-                    // Enviar el error al asistente y mostrar solo la respuesta natural
                     const errorMsg = "Ocurrió un error al buscar el producto.";
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
-                        const respuestaAsistente = await getAssistantResponse(
-                            ASSISTANT_ID,
-                            errorMsg,
-                            state,
-                            undefined,
-                            ctx.from,
-                            ctx.from
-                        );
-                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                            respuestaAsistente,
-                            ctx,
-                            flowDynamic,
-                            state,
-                            provider,
-                            gotoFlow,
-                            getAssistantResponse,
-                            ASSISTANT_ID
-                        );
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, errorMsg, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
+                    } else {
+                        await flowDynamic([{ body: errorMsg }]);
+                    }
+                    return;
+                }
+            } else if (tipo === "#BUSCAR_PRODUCTO_LISTA#") {
+                try {
+                    let payload = jsonData.payload || jsonData.data || {};
+                    // Adaptar campos del asistente al formato de la API
+                    if (payload.buscar !== undefined || payload.lista !== undefined) {
+                        payload = {
+                            searchData: payload.buscar || "",
+                            numeroDeListaDePrecio: payload.lista || 0
+                        };
+                    }
+                    const result = await searchProductsWithPrice(payload);
+                    console.log("Resultado de searchProductsWithPrice:", result);
+                    let apiResultText;
+                    if (result && result.data) {
+                        apiResultText = JSON.stringify(result.data);
+                    } else {
+                        apiResultText = "No se encontraron resultados para la búsqueda.";
+                    }
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, apiResultText, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
+                        return;
+                    } else {
+                        await flowDynamic([{ body: apiResultText }]);
+                        return;
+                    }
+                } catch (err) {
+                    console.error("Error al ejecutar searchProductsWithPrice:", err);
+                    const errorMsg = "Ocurrió un error al buscar el producto.";
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, errorMsg, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
+                    } else {
+                        await flowDynamic([{ body: errorMsg }]);
+                    }
+                    return;
+                }
+            } else if (tipo === "#BUSCAR_CODIGO_LISTA#") {
+                try {
+                    let payload = jsonData.payload || jsonData.data || {};
+                    // Adaptar campos del asistente al formato de la API
+                    if (payload.buscar !== undefined || payload.lista !== undefined) {
+                        payload = {
+                            searchData: payload.buscar || "",
+                            numeroDeListaDePrecio: payload.lista || 0
+                        };
+                    }
+                    const result = await getProductByCodeWithPrice(payload);
+                    console.log("Resultado de getProductByCodeWithPrice:", result);
+                    let apiResultText;
+                    if (result && result.data) {
+                        apiResultText = JSON.stringify(result.data);
+                    } else {
+                        apiResultText = "No se encontró el producto para el código ingresado.";
+                    }
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, apiResultText, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
+                        return;
+                    } else {
+                        await flowDynamic([{ body: apiResultText }]);
+                        return;
+                    }
+                } catch (err) {
+                    console.error("Error al ejecutar getProductByCodeWithPrice:", err);
+                    const errorMsg = "Ocurrió un error al buscar el código del producto.";
+                    if (getAssistantResponse && typeof getAssistantResponse === 'function') {
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, errorMsg, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
                     } else {
                         await flowDynamic([{ body: errorMsg }]);
                     }
@@ -188,41 +222,17 @@ export class AssistantResponseProcessor {
                     const payload = jsonData.payload || jsonData.data || {};
                     const result = await searchClient(payload);
                     console.log("Resultado de searchClient:", result);
-                    // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
                     let apiResultText;
                     if (result && result.data) {
-                        if (Array.isArray(result.data)) {
-                            apiResultText = JSON.stringify(result.data.slice(0, 10));
-                        } else {
-                            apiResultText = JSON.stringify(result.data);
-                        }
+                        apiResultText = JSON.stringify(result.data);
                     } else {
                         apiResultText = "No se encontraron resultados para la búsqueda.";
                     }
-                    // Llamar al asistente con el resultado de la API
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
-                        const respuestaAsistente = await getAssistantResponse(
-                            ASSISTANT_ID,
-                            apiResultText,
-                            state,
-                            undefined,
-                            ctx.from,
-                            ctx.from
-                        );
-                        // Procesar la respuesta final del asistente (puede contener [API] anidados)
-                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                            respuestaAsistente,
-                            ctx,
-                            flowDynamic,
-                            state,
-                            provider,
-                            gotoFlow,
-                            getAssistantResponse,
-                            ASSISTANT_ID
-                        );
-                        return; // Importante: no continuar con el flujo normal después de la recursividad
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, apiResultText, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
+                        return;
                     } else {
-                        // Fallback: mostrar el resultado plano si no hay getAssistantResponse
                         await flowDynamic([{ body: apiResultText }]);
                         return;
                     }
@@ -230,24 +240,8 @@ export class AssistantResponseProcessor {
                     console.error("Error al ejecutar searchClient:", err);
                     const errorMsg = "Ocurrió un error al buscar el cliente.";
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
-                        const respuestaAsistente = await getAssistantResponse(
-                            ASSISTANT_ID,
-                            errorMsg,
-                            state,
-                            undefined,
-                            ctx.from,
-                            ctx.from
-                        );
-                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                            respuestaAsistente,
-                            ctx,
-                            flowDynamic,
-                            state,
-                            provider,
-                            gotoFlow,
-                            getAssistantResponse,
-                            ASSISTANT_ID
-                        );
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, errorMsg, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
                     } else {
                         await flowDynamic([{ body: errorMsg }]);
                     }
@@ -256,8 +250,6 @@ export class AssistantResponseProcessor {
             } else if (tipo === "#ALTA_CLIENTE#") {
                 try {
                     let payload = jsonData.payload || jsonData.data || {};
-                    // Normalizar campos para la API (ejemplo: convertir nombres de campos si es necesario)
-                    // Puedes adaptar este mapeo según los requerimientos reales de la API
                     if (payload) {
                         payload = {
                             dni_o_Cuit: payload.dni_o_Cuit || payload.dni || payload.cuit || "",
@@ -272,43 +264,19 @@ export class AssistantResponseProcessor {
                             condicionesComerciales: payload.condicionesComerciales || null
                         };
                     }
-                    const result = await import("../API/Commit").then(m => m.createClient(payload));
+                    const result = await createClient(payload);
                     console.log("Resultado de createClient:", result);
-                    // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
                     let apiResultText;
                     if (result && result.data) {
-                        if (Array.isArray(result.data)) {
-                            apiResultText = JSON.stringify(result.data.slice(0, 10));
-                        } else {
-                            apiResultText = JSON.stringify(result.data);
-                        }
+                        apiResultText = JSON.stringify(result.data);
                     } else {
                         apiResultText = "No se pudo crear el cliente.";
                     }
-                    // Llamar al asistente con el resultado de la API
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
-                        const respuestaAsistente = await getAssistantResponse(
-                            ASSISTANT_ID,
-                            apiResultText,
-                            state,
-                            undefined,
-                            ctx.from,
-                            ctx.from
-                        );
-                        // Procesar la respuesta final del asistente (puede contener [API] anidados)
-                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                            respuestaAsistente,
-                            ctx,
-                            flowDynamic,
-                            state,
-                            provider,
-                            gotoFlow,
-                            getAssistantResponse,
-                            ASSISTANT_ID
-                        );
-                        return; // Importante: no continuar con el flujo normal después de la recursividad
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, apiResultText, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
+                        return;
                     } else {
-                        // Fallback: mostrar el resultado plano si no hay getAssistantResponse
                         await flowDynamic([{ body: apiResultText }]);
                         return;
                     }
@@ -316,24 +284,8 @@ export class AssistantResponseProcessor {
                     console.error("Error al ejecutar createClient:", err);
                     const errorMsg = "Ocurrió un error al crear el cliente.";
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
-                        const respuestaAsistente = await getAssistantResponse(
-                            ASSISTANT_ID,
-                            errorMsg,
-                            state,
-                            undefined,
-                            ctx.from,
-                            ctx.from
-                        );
-                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                            respuestaAsistente,
-                            ctx,
-                            flowDynamic,
-                            state,
-                            provider,
-                            gotoFlow,
-                            getAssistantResponse,
-                            ASSISTANT_ID
-                        );
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, errorMsg, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
                     } else {
                         await flowDynamic([{ body: errorMsg }]);
                     }
@@ -342,51 +294,25 @@ export class AssistantResponseProcessor {
             } else if (tipo === "#TOMA_PEDIDO#") {
                 try {
                     let payload = jsonData.payload || jsonData.data || {};
-                    // Normalizar campos si es necesario (ejemplo: convertir nombres de campos)
-                    // Puedes adaptar este mapeo según los requerimientos reales de la API
                     if (payload) {
                         payload = {
                             NumeroCuitoDNI: payload.NumeroCuitoDNI || payload.dni || payload.cuit || "",
                             Items: Array.isArray(payload.Items) ? payload.Items : (payload.items || [])
                         };
                     }
-                    const result = await import("../API/Commit").then(m => m.createOrder(payload));
+                    const result = await createOrder(payload);
                     console.log("Resultado de createOrder:", result);
-                    // Reinyectar el resultado al asistente y mostrar SOLO la respuesta del asistente al usuario
                     let apiResultText;
                     if (result && result.data) {
-                        if (Array.isArray(result.data)) {
-                            apiResultText = JSON.stringify(result.data.slice(0, 10));
-                        } else {
-                            apiResultText = JSON.stringify(result.data);
-                        }
+                        apiResultText = JSON.stringify(result.data);
                     } else {
                         apiResultText = "No se pudo registrar el pedido.";
                     }
-                    // Llamar al asistente con el resultado de la API
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
-                        const respuestaAsistente = await getAssistantResponse(
-                            ASSISTANT_ID,
-                            apiResultText,
-                            state,
-                            undefined,
-                            ctx.from,
-                            ctx.from
-                        );
-                        // Procesar la respuesta final del asistente (puede contener [API] anidados)
-                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                            respuestaAsistente,
-                            ctx,
-                            flowDynamic,
-                            state,
-                            provider,
-                            gotoFlow,
-                            getAssistantResponse,
-                            ASSISTANT_ID
-                        );
-                        return; // Importante: no continuar con el flujo normal después de la recursividad
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, apiResultText, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
+                        return;
                     } else {
-                        // Fallback: mostrar el resultado plano si no hay getAssistantResponse
                         await flowDynamic([{ body: apiResultText }]);
                         return;
                     }
@@ -394,24 +320,8 @@ export class AssistantResponseProcessor {
                     console.error("Error al ejecutar createOrder:", err);
                     const errorMsg = "Ocurrió un error al registrar el pedido.";
                     if (getAssistantResponse && typeof getAssistantResponse === 'function') {
-                        const respuestaAsistente = await getAssistantResponse(
-                            ASSISTANT_ID,
-                            errorMsg,
-                            state,
-                            undefined,
-                            ctx.from,
-                            ctx.from
-                        );
-                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                            respuestaAsistente,
-                            ctx,
-                            flowDynamic,
-                            state,
-                            provider,
-                            gotoFlow,
-                            getAssistantResponse,
-                            ASSISTANT_ID
-                        );
+                        const respuestaAsistente = await getAssistantResponse(ASSISTANT_ID, errorMsg, state, undefined, ctx.from, ctx.from);
+                        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(respuestaAsistente, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID);
                     } else {
                         await flowDynamic([{ body: errorMsg }]);
                     }
