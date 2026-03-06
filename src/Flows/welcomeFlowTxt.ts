@@ -2,7 +2,7 @@ import { addKeyword, EVENTS } from "@builderbot/bot";
 import { BaileysProvider } from "@builderbot/provider-baileys";
 import { MemoryDB } from "@builderbot/bot";
 import { reset } from "~/utils/timeOut";
-import { handleQueue, userQueues, userLocks } from "~/app";
+import { handleQueue, userQueues, userLocks } from "~/utils/queueManager";
 // Si se define timeOutCierre en minutos en .env, se multiplica por 60*1000 para obtener milisegundos
 const setTime = Number(process.env.timeOutCierre) * 60 * 1000;
 

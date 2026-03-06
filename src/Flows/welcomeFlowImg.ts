@@ -23,7 +23,7 @@ import { welcomeFlowTxt } from "./welcomeFlowTxt";
 import axios from "axios";
 import { OpenAI } from "openai";
 import { reset } from "../utils/timeOut";
-import { handleQueue, userQueues, userLocks } from "../app";
+import { handleQueue, userQueues, userLocks } from "~/utils/queueManager";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY_IMG });
 const IMGUR_CLIENT_ID = "dbe415c6bbb950d";

@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { addKeyword, EVENTS } from "@builderbot/bot";
-import { userQueues, userLocks, handleQueue } from "~/app";
+import { userQueues, userLocks, handleQueue } from "~/utils/queueManager";
 import { welcomeFlowTxt} from "./welcomeFlowTxt";
 import { reset } from "../utils/timeOut";
 import { idleFlow } from "./idleFlow";
