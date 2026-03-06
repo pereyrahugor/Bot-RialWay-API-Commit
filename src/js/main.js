@@ -1,5 +1,5 @@
 // Obtener el nombre del asistente dinámicamente y actualizar el div
-window.addEventListener('DOMContentLoaded', function() {
+window.addEventListener('DOMContentLoaded', function () {
     fetch('/api/assistant-name')
         .then(res => res.json())
         .then(data => {
@@ -14,14 +14,7 @@ const input = document.getElementById('input')
 const sendBtn = document.getElementById('send')
 const chat = document.getElementById('chat') // style - agus
 
-// ===== Botón volver en header =====
-const headerBack = document.getElementById('backBtn')
-if (headerBack) {
-    headerBack.addEventListener('click', () => {
-        if (history.length > 1) history.back()
-        else window.location.href = 'https://asistentes.clientesneurolinks.com/' // ajustar URL
-    })
-}
+
 
 // ===== Viewport dinámico para Chrome/Firefox/iOS =====
 function setAppVh() {
@@ -137,6 +130,95 @@ async function sendMessage() {
     } catch (err) {
         addMessage('Hubo un error procesando tu mensaje.', 'bot')
     }
+}
+
+// Evento para el clip de adjuntos
+const fileInput = document.getElementById('fileInput');
+const attachBtn = document.getElementById('attach');
+
+if (attachBtn) {
+    attachBtn.onclick = function (e) {
+        e.preventDefault();
+        fileInput.click();
+    };
+}
+
+if (fileInput) {
+    fileInput.onchange = async function () {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        // Limite de 15MB para prevenir error de red en Railway
+        if (file.size > 15 * 1024 * 1024) {
+            alert("El archivo es demasiado grande (Máximo soportado: 15MB)");
+            fileInput.value = '';
+            return;
+        }
+
+        // Reset UI altura (usa BASE_H)
+        autosizeSmart(textarea);
+
+        if (file.type.startsWith('image/')) {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const MAX_SIZE = 1200;
+                let width = img.width;
+                let height = img.height;
+                if (width > height && width > MAX_SIZE) {
+                    height *= MAX_SIZE / width;
+                    width = MAX_SIZE;
+                } else if (height > MAX_SIZE) {
+                    width *= MAX_SIZE / height;
+                    height = MAX_SIZE;
+                }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                // Convertir y enviar payload optimizado
+                const optimizedBase64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+                sendPayload('image', optimizedBase64, file.name, 'image/jpeg');
+            };
+            img.src = URL.createObjectURL(file);
+        } else {
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const base64 = reader.result.split(',')[1];
+                let type = 'document';
+                if (file.type.startsWith('audio/')) type = 'audio';
+                else if (file.type.startsWith('video/')) type = 'video';
+                sendPayload(type, base64, file.name, file.type || 'application/octet-stream');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function sendPayload(type, base64, filename, mimeType) {
+            const msgPayload = {
+                message: "",
+                file: {
+                    base64: base64,
+                    name: filename,
+                    mime: mimeType,
+                    type: type
+                }
+            };
+
+            const displayType = type === 'image' ? '🖼️' : (type === 'video' ? '📽️' : '📎');
+            addMessage(`${displayType} ${filename}`, 'user');
+            fileInput.value = '';
+
+            fetch('/webchat-api', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(msgPayload)
+            }).then(res => res.json()).then(data => {
+                if (data.reply) addMessage(data.reply, 'bot');
+            }).catch(err => {
+                addMessage('Hubo un error procesando tu archivo.', 'bot');
+            });
+        }
+    };
 }
 
 // Enter envía / Shift+Enter = nueva línea

@@ -11,15 +11,19 @@ function isReplyWithText(reply: any): reply is { text: string } {
 // ...existing imports y lógica del bot...
 import "dotenv/config";
 import path from 'path';
-import serve from 'serve-static';
+import serveStatic from 'serve-static';
 import { Server } from 'socket.io';
 import fs from 'fs';
-// Estado global para encender/apagar el bot
-let botEnabled = true;
-import { createBot, createProvider, createFlow, addKeyword, EVENTS } from "@builderbot/bot";
-import { MemoryDB } from "@builderbot/bot";
+import { fileURLToPath } from 'url';
+import { EventEmitter } from 'events';
+import bodyParser from 'body-parser';
+// Note: polka is already used via adapterProvider.server
+import { historyEvents } from "./utils/historyHandler";
+
+import { createBot, createProvider, createFlow, EVENTS, MemoryDB } from "@builderbot/bot";
 import { BaileysProvider } from "@builderbot/provider-baileys";
 import { toAsk, httpInject } from "@builderbot-plugins/openai-assistants";
+
 import { typing } from "./utils/presence";
 import { idleFlow } from "./Flows/idleFlow";
 import { welcomeFlowTxt } from "./Flows/welcomeFlowTxt";
@@ -31,27 +35,60 @@ import { updateMain } from "./addModule/updateMain";
 import { ErrorReporter } from "./utils/errorReporter";
 import { AssistantBridge } from './utils-web/AssistantBridge';
 import { WebChatManager } from './utils-web/WebChatManager';
-import { WebChatSession } from './utils-web/WebChatSession';
 import { AssistantResponseProcessor } from "./utils/AssistantResponseProcessor";
-import { fileURLToPath } from 'url';
-//import { imgResponseFlow } from "./Flows/imgResponse";
-//import { listImg } from "./addModule/listImg";
-//import { testAuth } from './utils/test-google-auth.js';
+import { HistoryHandler } from "./utils/historyHandler";
+import { userQueues, userLocks, handleQueue, registerProcessCallback } from "./utils/queueManager";
+import { waitForActiveRuns } from "./utils/AssistantResponseProcessor";
 
-// Definir __dirname para ES modules
+// Estado global para encender/apagar el bot
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Instancia global de WebChatManager para sesiones webchat
 const webChatManager = new WebChatManager();
-// Eliminado: processUserMessageWeb. Usar lógica principal para ambos canales.
 
 /** Puerto en el que se ejecutará el servidor (Railway usa 8080 por defecto) */
 const PORT = process.env.PORT || 8080;
 /** ID del asistente de OpenAI */
-export const ASSISTANT_ID = process.env.ASSISTANT_ID;
+const ASSISTANT_ID = process.env.ASSISTANT_ID;
 const ID_GRUPO_RESUMEN = process.env.ID_GRUPO_WS ?? "";
+const BACKOFFICE_TOKEN = process.env.BACKOFFICE_TOKEN || "admin123";
 
-const userQueues = new Map();
-const userLocks = new Map();
+/**
+ * Middleware para autenticación del Backoffice
+ */
+const backofficeAuth = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    if (authHeader === `token=${BACKOFFICE_TOKEN}`) {
+        next();
+    } else {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ error: 'No autorizado' }));
+    }
+};
+
+/**
+ * Función para servir páginas HTML con inyección dinámica opcional
+ */
+const serveHtmlPage = (filename, botName = '') => {
+  return (req, res) => {
+    const filePath = path.join(__dirname, '../src/html', filename);
+    if (fs.existsSync(filePath)) {
+      let htmlContent = fs.readFileSync(filePath, 'utf8');
+      
+      // Inyección dinámica para el Backoffice
+      if (filename === 'backoffice.html' && botName) {
+        htmlContent = htmlContent.replace(
+          '<h2 style="margin:0; font-size: 1.2rem;">Backoffice</h2>',
+          `<h2 style="margin:0; font-size: 1.2rem;">Backoffice - ${botName}</h2>`
+        );
+      }
+      
+      res.setHeader('Content-Type', 'text/html');
+      res.end(htmlContent);
+    } else {
+      res.statusCode = 404;
+      res.end('Página no encontrada');
+    }
+  };
+};
 
 const adapterProvider = createProvider(BaileysProvider, {
     groupsIgnore: false,
@@ -65,12 +102,33 @@ const TIMEOUT_MS = 30000;
 // Control de timeout por usuario para evitar ejecuciones automáticas superpuestas
 const userTimeouts = new Map();
 
-export const getAssistantResponse = async (assistantId, message, state, fallbackMessage, userId, thread_id = null) => {
-    // Solo enviar la fecha/hora si es realmente un hilo nuevo (no existe thread_id ni en el argumento ni en el state)
-    let effectiveThreadId = thread_id;
-    if (!effectiveThreadId && state && typeof state.get === 'function') {
-        effectiveThreadId = state.get('thread_id');
+/**
+ * Wrapper seguro para toAsk que añade control de thread_id y esperas de runs activos.
+ * Implementa Backoff Loop para reintentos de red o saturación.
+ */
+export const safeToAsk = async (assistantId, message, state, attempts = 3) => {
+    const thread_id = state.get('thread_id');
+    
+    for (let i = 0; i < attempts; i++) {
+        try {
+            if (thread_id) {
+                await waitForActiveRuns(thread_id);
+            }
+            return await toAsk(assistantId, message, state);
+        } catch (error: any) {
+            console.error(`[safeToAsk] Fallo en intento ${i + 1}/${attempts}:`, error.message);
+            if (i < attempts - 1) {
+                const waitTime = (i + 1) * 2000;
+                console.log(`[safeToAsk] Reintentando en ${waitTime}ms...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+                continue;
+            }
+            throw error;
+        }
     }
+};
+
+export const getAssistantResponse = async (assistantId, message, state, fallbackMessage, userId, thread_id = null) => {
   // Si hay un timeout previo, lo limpiamos
   if (userTimeouts.has(userId)) {
     clearTimeout(userTimeouts.get(userId));
@@ -82,14 +140,14 @@ export const getAssistantResponse = async (assistantId, message, state, fallback
     timeoutResolve = resolve;
     const timeoutId = setTimeout(() => {
       console.warn("⏱ Timeout alcanzado. Reintentando con mensaje de control...");
-      resolve(toAsk(assistantId, fallbackMessage ?? message, state));
+      resolve(safeToAsk(assistantId, fallbackMessage ?? message, state));
       userTimeouts.delete(userId);
     }, TIMEOUT_MS);
     userTimeouts.set(userId, timeoutId);
   });
 
-    // Lanzamos la petición a OpenAI, pasando thread_id si existe
-    const askPromise = toAsk(assistantId, message, state).then((result) => {
+    // Lanzamos la petición a OpenAI
+    const askPromise = safeToAsk(assistantId, message, state).then((result) => {
     // Si responde antes del timeout, limpiamos el timeout
     if (userTimeouts.has(userId)) {
       clearTimeout(userTimeouts.get(userId));
@@ -111,73 +169,62 @@ export const processUserMessage = async (
     await typing(ctx, provider);
     try {
         const body = ctx.body && ctx.body.trim();
+        const from = ctx.from;
+        const pushName = ctx.pushName || 'Usuario';
 
+        // PERSISTENCIA: Guardar mensaje del usuario
+        await HistoryHandler.saveMessage(
+            from, 
+            'user', 
+            body || (ctx.type === EVENTS.VOICE_NOTE ? "[Audio]" : "[Media]"), 
+            ctx.type || 'text',
+            pushName
+        );
 
-        // Comando para encender el bot
+        // COMANDOS DE ADMINISTRACIÓN (Solo WhatsApp o según prefieras)
         if (body === "#ON#") {
-            if (!botEnabled) {
-                botEnabled = true;
-                await flowDynamic([{ body: "🤖 Bot activado." }]);
-            } else {
-                await flowDynamic([{ body: "🤖 El bot ya está activado." }]);
-            }
+            await HistoryHandler.toggleBot(from, true);
+            await flowDynamic([{ body: "🤖 Bot activado para este chat." }]);
             return state;
         }
 
-        // Comando para apagar el bot
         if (body === "#OFF#") {
-            if (botEnabled) {
-                botEnabled = false;
-                await flowDynamic([{ body: "🛑 Bot desactivado. No responderé a más mensajes hasta recibir #ON#." }]);
-            } else {
-                await flowDynamic([{ body: "🛑 El bot ya está desactivado." }]);
-            }
+            await HistoryHandler.toggleBot(from, false);
+            await flowDynamic([{ body: "🛑 Bot desactivado para este chat. No responderé hasta recibir #ON#." }]);
             return state;
         }
 
-        // Comando para actualizar datos desde sheets
         if (body === "#ACTUALIZAR#") {
             try {
                 await updateMain();
                 await flowDynamic([{ body: "🔄 Datos actualizados desde Google Sheets." }]);
             } catch (err) {
-                await flowDynamic([{ body: "❌ Error al actualizar datos desde Google Sheets." }]);
+                await flowDynamic([{ body: "❌ Error al actualizar datos." }]);
             }
             return state;
         }
 
-        // Si el bot está apagado, ignorar todo excepto #ON#
-        if (!botEnabled) {
+        // VERIFICAR SI EL BOT ESTÁ ENCENDIDO PARA ESTE USUARIO
+        const isEnabled = await HistoryHandler.isBotEnabled(from);
+        if (!isEnabled) {
+            console.log(`[BotStatus] Bot apagado para ${from}. Ignorando mensaje.`);
             return;
         }
 
-        // Ignorar mensajes de listas de difusión (ID termina en @broadcast)
-        if (ctx.from && /@broadcast$/.test(ctx.from)) {
-            console.log('Mensaje de difusión ignorado:', ctx.from);
+        // Ignorar mensajes de listas de difusión
+        if (from && /@broadcast$/.test(from)) {
             return;
         }
 
-        // Interceptar trigger de imagen antes de pasar al asistente
-        // if (body === "#TestImg#") {
-        //     // Usar el flow de imagen para responder y detener el flujo
-        //     return gotoFlow(imgResponseFlow);
-        // }
+        const response = await getAssistantResponse(ASSISTANT_ID, ctx.body, state, "Prueba a responder de forma concisa.", from, ctx.thread_id);
 
-        // Usar el nuevo wrapper para obtener respuesta y thread_id
-        const response = await getAssistantResponse(ASSISTANT_ID, ctx.body, state, "Por favor, responde aunque sea brevemente.", ctx.from, ctx.thread_id);
-
-        if (
-            !response ||
-            (typeof response === 'object' && response !== null && !('text' in response))
-        ) {
-            await errorReporter.reportError(
-                new Error("No se recibió respuesta del asistente."),
-                ctx.from,
-                `https://wa.me/${ctx.from}`
-            );
+        if (!response) {
+            await errorReporter.reportError(new Error("No se recibió respuesta del asistente."), from, `https://wa.me/${from}`);
+            return;
         }
 
-            await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
+        // PROCESAR RESPUESTA (AssistantResponseProcessor se encarga de TODO: APIs, recursividad, limpieza y flowDynamic)
+        await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
             response,
             ctx,
             flowDynamic,
@@ -188,60 +235,11 @@ export const processUserMessage = async (
             ASSISTANT_ID
         );
 
-        // Guardar thread_id en el contexto si lo retorna la respuesta
-        if (
-            response &&
-            typeof response === 'object' &&
-            response !== null &&
-            'thread_id' in response
-        ) {
-            ctx.lastThreadId = (response as { thread_id: string }).thread_id;
-        }
-
-        const textResponse =
-            response && typeof response === 'object' && response !== null && 'text' in response
-                ? (response as { text: string }).text
-                : String(response);
-        const chunks = textResponse.split(/\n\n+/);
-    const allChunks = [];
-        for (const chunk of chunks) {
-            // Detecta trigger de imagen en la respuesta del asistente
-            const imgMatch = chunk.trim().match(/\[IMG\]\s*(.+)/i);
-            if (imgMatch) {
-                continue;
-            }
-            if (/un momento/i.test(chunk.trim())) {
-                allChunks.push(chunk.trim());
-                await new Promise(res => setTimeout(res, 10000));
-                // Usar el wrapper también para followup
-                const followup = await getAssistantResponse(ASSISTANT_ID, ctx.body, state, undefined, ctx.from, ctx.thread_id);
-                if (
-                    followup &&
-                    typeof followup === 'object' &&
-                    followup !== null &&
-                    'text' in followup &&
-                    (followup as { text: string }).text &&
-                    !/un momento/i.test((followup as { text: string }).text)
-                ) {
-                    allChunks.push(String((followup as { text: string }).text).trim());
-                }
-                continue;
-            }
-            allChunks.push(chunk.trim());
-        }
-    // La respuesta ya fue enviada por AssistantResponseProcessor.analizarYProcesarRespuestaAsistente
-    return state;
+        return state;
     } catch (error) {
         console.error("Error al procesar el mensaje del usuario:", error);
-
-        // Enviar reporte de error al grupo de WhatsApp
-        await errorReporter.reportError(
-            error,
-            ctx.from,
-            `https://wa.me/${ctx.from}`
-        );
-
-        // 📌 Manejo de error: volver al flujo adecuado
+        await errorReporter.reportError(error, ctx.from, `https://wa.me/${ctx.from}`);
+        
         if (ctx.type === EVENTS.VOICE_NOTE) {
             return gotoFlow(welcomeFlowVoice);
         } else {
@@ -251,320 +249,186 @@ export const processUserMessage = async (
 };
 
 
-const handleQueue = async (userId) => {
-    const queue = userQueues.get(userId);
-
-    if (userLocks.get(userId)) return;
-
-    userLocks.set(userId, true);
-
-    while (queue.length > 0) {
-        const { ctx, flowDynamic, state, provider, gotoFlow } = queue.shift();
-        try {
-            await processUserMessage(ctx, { flowDynamic, state, provider, gotoFlow });
-        } catch (error) {
-            console.error(`Error procesando el mensaje de ${userId}:`, error);
-        }
-    }
-
-    userLocks.set(userId, false);
-    userQueues.delete(userId);
-};
+// La lógica de colas está en queueManager.ts
 
 // Main function to initialize the bot and load Google Sheets data
 const main = async () => {
-    // Verificar credenciales de Google Sheets al iniciar
-    //await testAuth();
+    console.log("📌 Inicializando datos desde Google Sheets...");
 
-    // Actualizar listado de imágenes en vector store
-    //await listImg();
+    registerProcessCallback(async ({ ctx, flowDynamic, state, provider, gotoFlow }) => {
+        await processUserMessage(ctx, { flowDynamic, state, provider, gotoFlow });
+    });
 
-    // // Paso 1: Inicializar datos desde Google Sheets
-     console.log("📌 Inicializando datos desde Google Sheets...");
-
-    // Cargar todas las hojas principales con una sola función reutilizable
     await updateMain();
 
+    const { httpServer } = await createBot({
+        flow: createFlow([
+            welcomeFlowTxt,
+            welcomeFlowVoice,
+            welcomeFlowImg,
+            welcomeFlowDoc,
+            locationFlow
+        ]),
+        provider: createProvider(BaileysProvider),
+        database: new MemoryDB(),
+    });
 
-                // ...existing code...
-                const adapterFlow = createFlow([welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, welcomeFlowDoc, locationFlow, idleFlow]);
-                const adapterProvider = createProvider(BaileysProvider, {
-                    version: [2, 3000, 1027934701],
-                    groupsIgnore: false,
-                    readStatus: false,
+    const realHttpServer = (httpServer as any).server || httpServer;
+    const io = new Server(realHttpServer, {
+        cors: { origin: "*", methods: ["GET", "POST"] }
+    });
+
+    io.on('connection', (socket) => {
+        console.log('Cliente conectado via Socket.io:', socket.id);
+        
+        socket.on('join_chat', (chatId) => {
+            socket.join(chatId);
+            console.log(`Socket ${socket.id} se unió al chat ${chatId}`);
+        });
+
+        socket.on('send_message', async (data) => {
+            try {
+                const { chatId, message } = data;
+                console.log(`Mensaje manual desde Backoffice para ${chatId}: ${message}`);
+                
+                // Aquí podrías implementar la lógica para enviar mensajes manuales vía provider
+                // Por ahora solo lo guardamos en el historial
+                await HistoryHandler.saveMessage(chatId, 'assistant', message, 'text', 'Soporte');
+                
+                // Notificar a otros clientes
+                io.to(chatId).emit('new_message', {
+                    from: 'assistant',
+                    body: message,
+                    type: 'text',
+                    timestamp: new Date().toISOString()
                 });
-                const adapterDB = new MemoryDB();
-                const { httpServer } = await createBot({
-                    flow: adapterFlow,
-                    provider: adapterProvider,
-                    database: adapterDB,
-                });
-                httpInject(adapterProvider.server);
+            } catch (err) {
+                console.error('Error enviando mensaje manual:', err);
+            }
+        });
+    });
 
-                // Usar la instancia Polka (adapterProvider.server) para rutas
-                const polkaApp = adapterProvider.server;
-                polkaApp.use("/js", serve("src/js"));
-                polkaApp.use("/style", serve("src/style"));
-                polkaApp.use("/assets", serve("src/assets"));
-                // Endpoint para obtener el nombre del asistente de forma dinámica
-                polkaApp.get('/api/assistant-name', (req, res) => {
-                    const assistantName = process.env.ASSISTANT_NAME || 'Asistente demo';
-                    res.setHeader('Content-Type', 'application/json');
-                    res.end(JSON.stringify({ name: assistantName }));
-                });
+    historyEvents.on('new_message', (data) => {
+        io.to(data.chatId).emit('new_message', data);
+        io.emit('global_new_message', data);
+    });
 
-                // Agregar ruta personalizada para el webchat
-                polkaApp.get('/webchat', (req, res) => {
-                    res.setHeader('Content-Type', 'text/html');
-                    res.end(fs.readFileSync(path.join(__dirname, '../webchat.html')));
-                });
+    historyEvents.on('bot_toggled', (data) => {
+        io.emit('bot_status_changed', data);
+    });
 
-                // Obtener el servidor HTTP real de BuilderBot después de httpInject
-                const realHttpServer = adapterProvider.server.server;
+    const polkaApp = (httpServer as any).polka || httpServer;
 
-                // Integrar Socket.IO sobre el servidor HTTP real de BuilderBot
-                const io = new Server(realHttpServer, { cors: { origin: '*' } });
-                io.on('connection', (socket) => {
-                    console.log('💬 Cliente web conectado');
-                    socket.on('message', async (msg) => {
-                        // Procesar el mensaje usando la lógica principal del bot
-                        try {
-                            let ip = '';
-                            const xff = socket.handshake.headers['x-forwarded-for'];
-                            if (typeof xff === 'string') {
-                                ip = xff.split(',')[0];
-                            } else if (Array.isArray(xff)) {
-                                ip = xff[0];
-                            } else {
-                                ip = socket.handshake.address || '';
-                            }
-                            // Centralizar historial y estado igual que WhatsApp
-                            if (!global.webchatHistories) global.webchatHistories = {};
-                            const historyKey = `webchat_${ip}`;
-                            if (!global.webchatHistories[historyKey]) global.webchatHistories[historyKey] = [];
-                            const _history = global.webchatHistories[historyKey];
-                            const state = {
-                                get: function (key) {
-                                    if (key === 'history') return _history;
-                                    return undefined;
-                                },
-                                update: async function (msg, role = 'user') {
-                                    if (_history.length > 0) {
-                                        const last = _history[_history.length - 1];
-                                        if (last.role === role && last.content === msg) return;
-                                    }
-                                    _history.push({ role, content: msg });
-                                    if (_history.length >= 6) {
-                                        const last3 = _history.slice(-3);
-                                        if (last3.every(h => h.role === 'user' && h.content === msg)) {
-                                            _history.length = 0;
-                                        }
-                                    }
-                                },
-                                clear: async function () { _history.length = 0; }
-                            };
-                            const provider = undefined;
-                            const gotoFlow = () => {};
-                            let replyText = '';
-                            const flowDynamic = async (arr) => {
-                                if (Array.isArray(arr)) {
-                                    replyText = arr.map(a => a.body).join('\n');
-                                } else if (typeof arr === 'string') {
-                                    replyText = arr;
-                                }
-                            };
-                            if (msg.trim().toLowerCase() === "#reset" || msg.trim().toLowerCase() === "#cerrar") {
-                                await state.clear();
-                                replyText = "🔄 El chat ha sido reiniciado. Puedes comenzar una nueva conversación.";
-                            } else {
-                                await processUserMessage({ from: ip, body: msg, type: 'webchat' }, { flowDynamic, state, provider, gotoFlow });
-                            }
-                            socket.emit('reply', replyText);
-                        } catch (err) {
-                            console.error('Error procesando mensaje webchat:', err);
-                            socket.emit('reply', 'Hubo un error procesando tu mensaje.');
-                        }
-                    });
-                });
+    polkaApp.use(bodyParser.json());
+    polkaApp.use(serveStatic(path.join(__dirname, 'html')));
+    polkaApp.use('/js', serveStatic(path.join(__dirname, 'html', 'js')));
+    polkaApp.use('/style', serveStatic(path.join(__dirname, 'html', 'style')));
+    polkaApp.use('/assets', serveStatic(path.join(__dirname, 'html', 'assets')));
 
+    polkaApp.get('/backoffice', backofficeAuth, serveHtmlPage('backoffice.html', (process.env.ASSISTANT_NAME || 'Bot')));
+    polkaApp.get('/dashboard', backofficeAuth, serveHtmlPage('dashboard.html'));
+    polkaApp.get('/login', serveHtmlPage('login.html'));
+    polkaApp.get('/variables', backofficeAuth, serveHtmlPage('variables.html'));
+    polkaApp.get('/webchat', serveHtmlPage('webchat.html'));
+    polkaApp.get('/webreset', serveHtmlPage('webreset.html'));
 
+    polkaApp.get('/api/backoffice/chats', backofficeAuth, async (req, res) => {
+        try {
+            const chats = await HistoryHandler.listChats();
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(chats));
+        } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+        }
+    });
 
-                // Integrar AssistantBridge si es necesario
-                const assistantBridge = new AssistantBridge();
-                assistantBridge.setupWebChat(polkaApp, realHttpServer);
+    polkaApp.get('/api/backoffice/messages/:chatId', backofficeAuth, async (req, res) => {
+        try {
+            const { chatId } = req.params;
+            const history = await HistoryHandler.getMessages(chatId);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(history));
+        } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+        }
+    });
 
-                                polkaApp.post('/webchat-api', async (req, res) => {
-                                    console.log('Llamada a /webchat-api'); // log para debug
-                                    // Si el body ya está disponible (por ejemplo, con body-parser), úsalo directamente
-                                        if (req.body && req.body.message != null) {
-                                        console.log('Body recibido por body-parser:', req.body); // debug
-                                        try {
-                                            const message = req.body.message;
-                                            console.log('Mensaje recibido en webchat:', message); // debug
-                                            let ip = '';
-                                            const xff = req.headers['x-forwarded-for'];
-                                            if (typeof xff === 'string') {
-                                                ip = xff.split(',')[0];
-                                            } else if (Array.isArray(xff)) {
-                                                ip = xff[0];
-                                            } else {
-                                                ip = req.socket.remoteAddress || '';
-                                            }
-                                            // Crear un ctx similar al de WhatsApp, usando el IP como 'from'
-                                            const ctx = {
-                                                from: ip,
-                                                body: message,
-                                                type: 'webchat',
-                                                // Puedes agregar más propiedades si tu lógica lo requiere
-                                            };
-                                            // Usar WebChatManager y WebChatSession para gestionar la sesión webchat
-                                            // Usar un Set para evitar duplicados y asegurar acumulación en recursividad
-                                            const replyChunksSet = new Set();
-                                            const flowDynamic = async (arr) => {
-                                                const filtrarAPI = (txt) => txt && typeof txt === 'string' && !/\[API\][\s\S]*?\[\/API\]/.test(txt) && txt.trim().length > 0;
-                                                if (Array.isArray(arr)) {
-                                                    for (const a of arr) {
-                                                        if (a && typeof a.body === 'string' && filtrarAPI(a.body)) replyChunksSet.add(a.body.trim());
-                                                    }
-                                                } else if (typeof arr === 'string' && filtrarAPI(arr)) {
-                                                    replyChunksSet.add(arr.trim());
-                                                }
-                                            };
-                                            const { getOrCreateThreadId, sendMessageToThread, deleteThread } = await import('./utils-web/openaiThreadBridge');
-                                            const session = webChatManager.getSession(ip);
-                                            if (message.trim().toLowerCase() === "#reset" || message.trim().toLowerCase() === "#cerrar") {
-                                                await deleteThread(session);
-                                                session.clear();
-                                                replyChunksSet.add("🔄 El chat ha sido reiniciado. Puedes comenzar una nueva conversación.");
-                                            } else {
-                                                session.addUserMessage(message);
-                                                const threadId = await getOrCreateThreadId(session);
-                                                const reply = await sendMessageToThread(threadId, message, ASSISTANT_ID);
-                                                session.addAssistantMessage(reply);
-                                                // Procesar SIEMPRE la respuesta del asistente
-                                                let bloqueoSoloPrimeraAPI = false;
-                                                const flowDynamicProxy = async (arr) => {
-                                                    const filtrarAPI = (txt) => txt && typeof txt === 'string' && !/\[API\][\s\S]*?\[\/API\]/.test(txt) && txt.trim().length > 0;
-                                                    // Bloquear solo la PRIMERA llamada con resultado crudo de API
-                                                    if (!bloqueoSoloPrimeraAPI && arr && Array.isArray(arr) && arr.length === 1 && arr[0].body && (arr[0].body.includes('No se encontraron resultados para la búsqueda.') || arr[0].body.includes('Ocurrió un error al buscar el producto.') || arr[0].body.startsWith('{'))) {
-                                                        bloqueoSoloPrimeraAPI = true;
-                                                        return; // NO agregar este mensaje al usuario
-                                                    }
-                                                    // Todas las siguientes (del asistente) sí se agregan, pero nunca [API]...
-                                                    if (Array.isArray(arr)) {
-                                                        for (const a of arr) {
-                                                            if (a && typeof a.body === 'string' && filtrarAPI(a.body)) replyChunksSet.add(a.body.trim());
-                                                        }
-                                                    } else if (typeof arr === 'string' && filtrarAPI(arr)) {
-                                                        replyChunksSet.add(arr.trim());
-                                                    }
-                                                };
-                                                await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                                                    reply,
-                                                    ctx,
-                                                    flowDynamicProxy,
-                                                    session,
-                                                    undefined,
-                                                    () => {},
-                                                    async (...args) => await sendMessageToThread(threadId, args[1], ASSISTANT_ID),
-                                                    ASSISTANT_ID
-                                                );
-                                                // Si NO hubo bloque API ni respuesta acumulada, mostrar la última respuesta del asistente (plana o recursiva)
-                                                if (!replyChunksSet.size) {
-                                                    if (typeof reply === 'string' && reply.trim().length > 0) {
-                                                        replyChunksSet.add(reply.trim());
-                                                    } else if (isReplyWithText(reply)) {
-                                                        replyChunksSet.add(reply.text.trim());
-                                                    }
-                                                }
-                                            }
-                                            res.setHeader('Content-Type', 'application/json');
-                                            const replyText = Array.from(replyChunksSet).join('\n');
-                                            res.end(JSON.stringify({ reply: replyText }));
-                                        } catch (err) {
-                                            console.error('Error en /webchat-api:', err); // debug
-                                            res.statusCode = 500;
-                                            res.end(JSON.stringify({ reply: 'Hubo un error procesando tu mensaje.' }));
-                                        }
-                                    } else {
-                                        // Fallback manual si req.body no está disponible
-                                        let body = '';
-                                        req.on('data', chunk => { body += chunk; });
-                                        req.on('end', async () => {
-                                            console.log('Body recibido en /webchat-api:', body); // log para debug
-                                            try {
-                                                const { message } = JSON.parse(body);
-                                                console.log('Mensaje recibido en webchat:', message); // debug
-                                                let ip = '';
-                                                const xff = req.headers['x-forwarded-for'];
-                                                if (typeof xff === 'string') {
-                                                    ip = xff.split(',')[0];
-                                                } else if (Array.isArray(xff)) {
-                                                    ip = xff[0];
-                                                } else {
-                                                    ip = req.socket.remoteAddress || '';
-                                                }
-                                                // Centralizar historial y estado igual que WhatsApp
-                                                if (!global.webchatHistories) global.webchatHistories = {};
-                                                const historyKey = `webchat_${ip}`;
-                                                if (!global.webchatHistories[historyKey]) global.webchatHistories[historyKey] = { history: [], thread_id: null };
-                                                const _store = global.webchatHistories[historyKey];
-                                                const _history = _store.history;
-                                                const state = {
-                                                    get: function (key) {
-                                                        if (key === 'history') return _history;
-                                                        if (key === 'thread_id') return _store.thread_id;
-                                                        return undefined;
-                                                    },
-                                                    setThreadId: function (id) {
-                                                        _store.thread_id = id;
-                                                    },
-                                                    update: async function (msg, role = 'user') {
-                                                        if (_history.length > 0) {
-                                                            const last = _history[_history.length - 1];
-                                                            if (last.role === role && last.content === msg) return;
-                                                        }
-                                                        _history.push({ role, content: msg });
-                                                        if (_history.length >= 6) {
-                                                            const last3 = _history.slice(-3);
-                                                            if (last3.every(h => h.role === 'user' && h.content === msg)) {
-                                                                _history.length = 0;
-                                                                _store.thread_id = null;
-                                                            }
-                                                        }
-                                                    },
-                                                    clear: async function () { _history.length = 0; _store.thread_id = null; }
-                                                };
-                                                const provider = undefined;
-                                                const gotoFlow = () => {};
-                                                let replyText = '';
-                                                const flowDynamic = async (arr) => {
-                                                    if (Array.isArray(arr)) {
-                                                        replyText = arr.map(a => a.body).join('\n');
-                                                    } else if (typeof arr === 'string') {
-                                                        replyText = arr;
-                                                    }
-                                                };
-                                                if (message.trim().toLowerCase() === "#reset" || message.trim().toLowerCase() === "#cerrar") {
-                                                    await state.clear();
-                                                    replyText = "🔄 El chat ha sido reiniciado. Puedes comenzar una nueva conversación.";
-                                                } else {
-                                                    // ...thread_id gestionado por openaiThreadBridge, no es necesario actualizar aquí...
-                                                }
-                                                res.setHeader('Content-Type', 'application/json');
-                                                res.end(JSON.stringify({ reply: replyText }));
-                                            } catch (err) {
-                                                console.error('Error en /webchat-api:', err); // debug
-                                                res.statusCode = 500;
-                                                res.end(JSON.stringify({ reply: 'Hubo un error procesando tu mensaje.' }));
-                                            }
-                                        });
-                                    }
-                                });
+    polkaApp.get('/api/backoffice/profile-pic/:chatId', backofficeAuth, async (req, res) => {
+        try {
+            const { chatId } = req.params;
+            let url = 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png';
+            
+            try {
+                // jid format: XXXXX@s.whatsapp.net
+                const jid = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
+                url = await adapterProvider.vendor.profilePictureUrl(jid, 'image');
+            } catch (e) {
+                // Silently ignore if no profile pic
+            }
+            
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ url }));
+        } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+        }
+    });
 
-            // No llamar a listen, BuilderBot ya inicia el servidor
+    polkaApp.post('/api/backoffice/toggle-bot', backofficeAuth, async (req, res) => {
+        try {
+            const { chatId, enabled } = req.body;
+            await HistoryHandler.toggleBot(chatId, enabled);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: true }));
+        } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+        }
+    });
 
-    // ...existing code...
+    polkaApp.post('/api/backoffice/send-message', backofficeAuth, async (req, res) => {
+        try {
+            const { chatId, message } = req.body;
+            const jid = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
+            
+            console.log(`[Backoffice] Enviando mensaje manual a ${jid}: ${message}`);
+            
+            // Enviar via Baileys
+            await adapterProvider.sendMessage(jid, message, {});
+            
+            // Guardar en historial con rol assistant (Soporte Humano)
+            await HistoryHandler.saveMessage(chatId, 'assistant', message, 'text', 'Soporte Humano');
+            
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: true }));
+        } catch (err) {
+            console.error('Error enviando mensaje manual desde API:', err);
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+        }
+    });
+
+    polkaApp.post('/webchat-api', async (req, res) => {
+        try {
+            const { message, thread_id } = req.body;
+            let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+            if (Array.isArray(ip)) ip = ip[0];
+            
+            const from = `web_${ip?.replace(/[^a-zA-Z0-9]/g, '') || 'unknown'}`;
+            
+            // Lógica similar a processUserMessage pero para WebChat
+            const response = await getAssistantResponse(ASSISTANT_ID, message, {}, "Responde al usuario del webchat.", from, thread_id);
+            
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ reply: response }));
+        } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+        }
+    });
+
     httpServer(+PORT);
 };
 
@@ -572,10 +436,6 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-export { welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, welcomeFlowDoc, locationFlow,
-        handleQueue, userQueues, userLocks,
- };
+export { welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, welcomeFlowDoc, locationFlow };
 
 main();
-
-//ok

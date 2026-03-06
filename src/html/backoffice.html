@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Backoffice - Neurolinks</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --bg: #0f172a;
+            --sidebar: #1e293b;
+            --card: #1e293b;
+            --text: #f8fafc;
+            --accent: #8b5cf6;
+        }
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* Sidebar */
+        #sidebar {
+            width: 350px;
+            background: var(--sidebar);
+            border-right: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        #chat-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+        .chat-item {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .chat-item:hover { background: rgba(255,255,255,0.05); }
+        .chat-item.active { background: rgba(99, 102, 241, 0.2); border-left: 4px solid var(--primary); }
+        .chat-avatar { 
+            width: 44px; 
+            height: 44px; 
+            border-radius: 50%; 
+            background: linear-gradient(135deg, #6366f1, #a855f7); 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            font-weight: 700; 
+            font-size: 1.1rem; 
+            flex-shrink: 0; 
+            overflow: hidden;
+            position: relative; 
+        }
+        .chat-avatar img {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            z-index: 2;
+            border-radius: 50%;
+            background: inherit;
+        }
+        .chat-info { flex: 1; overflow: hidden; }
+        .chat-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .chat-last-msg { font-size: 0.8rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        
+        /* Main Chat Area */
+        #main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: radial-gradient(circle at top right, #1e1b4b, #0f172a);
+        }
+        #chat-header {
+            padding: 1rem 2rem;
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header-user { display: flex; align-items: center; gap: 1rem; }
+        
+        /* Intervention Switch */
+        .switch-container { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334155; transition: .4s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--primary); }
+        input:checked + .slider:before { transform: translateX(26px); }
+111: 
+112:         #messages {
+113:             flex: 1;
+114:             padding: 2rem;
+115:             overflow-y: auto;
+116:             display: flex;
+117:             flex-direction: column;
+118:             gap: 1rem;
+119:         }
+120:         .msg { max-width: 70%; padding: 0.75rem 1.25rem; border-radius: 1rem; line-height: 1.5; font-size: 0.95rem; position: relative; }
+121:         .msg.user { align-self: flex-start; background: #334155; color: white; border-bottom-left-radius: 0.2rem; }
+122:         .msg.assistant { align-self: flex-end; background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; border-bottom-right-radius: 0.2rem; }
+123:         
+124:         .msg-time {
+125:             font-size: 0.7rem;
+126:             opacity: 0.7;
+127:             margin-top: 0.25rem;
+128:             display: block;
+129:             text-align: right;
+130:         }
+131:         .msg.user .msg-time { text-align: left; }
+132:         
+133:         #input-area {
+134:             padding: 1.5rem 2rem;
+135:             background: rgba(30, 41, 59, 0.8);
+136:             backdrop-filter: blur(10px);
+137:             border-top: 1px solid rgba(255,255,255,0.1);
+138:             display: flex;
+139:             gap: 1rem;
+140:         }
+141:         #message-input {
+142:             flex: 1;
+143:             background: #0f172a;
+144:             border: 1px solid #334155;
+145:             padding: 0.75rem 1.25rem;
+146:             border-radius: 0.75rem;
+147:             color: white;
+148:             outline: none;
+149:         }
+150:         #message-input:disabled { opacity: 0.5; cursor: not-allowed; }
+151:         .btn-send { background: var(--primary); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 0.75rem; font-weight: 600; cursor: pointer; }
+152:         .btn-send:disabled { background: #475569; cursor: not-allowed; }
+153: 
+154:         /* Status colors */
+155:         .status-bot { color: #4ade80; }
+156:         .status-human { color: #f87171; }
+157:     </style>
+158: </head>
+159: <body>
+160:     <div id="sidebar">
+161:         <div class="sidebar-header">
+162:             <h2 style="margin:0; font-size: 1.2rem;">Backoffice</h2>
+163:             <button onclick="logout()" style="background:none; border:none; color:#f87171; cursor:pointer; font-size:0.8rem;">Salir</button>
+164:         </div>
+165:         <div id="chat-list">
+166:             <!-- Cargando hilos... -->
+167:         </div>
+168:     </div>
+169: 
+170:     <div id="main-content">
+171:         <div id="chat-header">
+172:             <div class="header-user">
+173:                 <div id="active-chat-avatar" class="chat-avatar">?</div>
+174:                 <div>
+175:                     <div id="active-chat-name" class="chat-name">Selecciona un chat</div>
+176:                     <div id="active-chat-id" style="font-size:0.8rem; color:#94a3b8;">---</div>
+177:                 </div>
+178:             </div>
+179:             <div class="intervention-status">
+180:                 <div class="switch-container">
+181:                     <span id="bot-status-text">Bot Activo</span>
+182:                     <label class="switch">
+183:                         <input type="checkbox" id="bot-toggle" disabled onchange="toggleBot(this.checked)">
+184:                         <span class="slider"></span>
+185:                     </label>
+186:                 </div>
+187:             </div>
+188:         </div>
+189: 
+190:         <div id="messages">
+191:             <!-- Mensajes aquí -->
+192:         </div>
+193: 
+194:         <div id="input-area">
+195:             <input type="text" id="message-input" placeholder="Escribe un mensaje..." disabled>
+196:             <button class="btn-send" id="send-btn" onclick="sendMessage()" disabled>Enviar</button>
+197:         </div>
+198:     </div>
+199: 
+200:     <script>
+201:         const token = localStorage.getItem('backoffice_token');
+202:         if (!token) window.location.href = '/login';
+203: 
+204:         let activeChatId = null;
+205:         let chats = [];
+206: 
+207:         // Inicializar Socket.IO para tiempo real
+208:         const socket = io();
+209: 
+210:         socket.on('connect', () => {
+211:             console.log('✅ Conectado al servidor de tiempo real');
+212:         });
+213: 
+214:         socket.on('new_message', (payload) => {
+215:             console.log('📡 Nuevo mensaje recibido:', payload);
+216:             // Si el mensaje es para el chat que estamos viendo, recargar mensajes
+217:             if (activeChatId === payload.chatId) {
+218:                 fetchMessages(activeChatId);
+219:             }
+220:             // En cualquier caso, refrescar la lista lateral para actualizar el orden/último mensaje
+221:             fetchChats();
+222:         });
+223: 
+224:         socket.on('bot_toggled', (payload) => {
+225:             console.log('📡 Bot toggled:', payload);
+226:             if (activeChatId === payload.chatId) {
+227:                 const toggle = document.getElementById('bot-toggle');
+228:                 toggle.checked = payload.bot_enabled;
+229:                 updateBotStatusText(payload.bot_enabled);
+230:                 updateInputState(payload.bot_enabled);
+231:             }
+232:             fetchChats();
+233:         });
+234: 
+235:         async function fetchChats() {
+236:             try {
+237:                 const res = await fetch(`/api/backoffice/chats?token=${token}`);
+238:                 if (res.status === 401) logout();
+239:                 chats = await res.json();
+240:                 renderChatList();
+241:             } catch (e) { console.error(e); }
+242:         }
+243: 
+244:         function renderChatList() {
+245:             const list = document.getElementById('chat-list');
+246:             list.innerHTML = chats.map(chat => {
+247:                 const initial = (chat.name || chat.id).charAt(0).toUpperCase();
+248:                 const avatarUrl = `/api/backoffice/profile-pic/${chat.id}?token=${token}`;
+249:                 
+250:                 return `
+251:                     <div class="chat-item ${activeChatId === chat.id ? 'active' : ''}" onclick="selectChat('${chat.id}')">
+252:                         <div class="chat-avatar">
+253:                             <span style="position:relative; z-index:1;">${initial}</span>
+254:                             <img src="${avatarUrl}" onerror="this.style.display='none'">
+255:                         </div>
+256:                         <div class="chat-info">
+257:                             <div class="chat-name">${chat.name || chat.id}</div>
+258:                             <div style="font-size:0.75rem; opacity:0.8; margin-top:0.25rem;">
+259:                                 ${chat.bot_enabled ? '🤖 Bot' : '👤 Humano'}
+260:                             </div>
+261:                         </div>
+262:                     </div>
+263:                 `;
+264:             }).join('');
+265:         }
+266: 
+267:         async function selectChat(id) {
+268:             activeChatId = id;
+269:             const chat = chats.find(c => c.id === id);
+270:             
+271:             document.getElementById('active-chat-name').innerText = chat.name || chat.id;
+272:             document.getElementById('active-chat-id').innerText = chat.id;
+273:             
+274:             const headerAvatar = document.getElementById('active-chat-avatar');
+275:             const initial = (chat.name || chat.id).charAt(0).toUpperCase();
+276:             const avatarUrl = `/api/backoffice/profile-pic/${chat.id}?token=${token}`;
+277:             
+278:             headerAvatar.innerHTML = `
+279:                 <span style="position:relative; z-index:1;">${initial}</span>
+280:                 <img src="${avatarUrl}" style="width:100%; height:100%; object-fit:cover; position:absolute; top:0; left:0; z-index:2;" onerror="this.style.display='none'">
+281:             `;
+282:             
+283:             const botToggle = document.getElementById('bot-toggle');
+284:             botToggle.disabled = false;
+285:             botToggle.checked = chat.bot_enabled;
+286:             updateBotStatusText(chat.bot_enabled);
+287: 
+288:             // Inputs habilitados solo si el bot está desactivado (intervención humana)
+289:             updateInputState(chat.bot_enabled);
+290: 
+291:             renderChatList();
+292:             fetchMessages(id);
+293:         }
+294: 
+295:         function updateBotStatusText(enabled) {
+296:             const txt = document.getElementById('bot-status-text');
+297:             txt.innerText = enabled ? 'Bot Activo' : 'Intervención Humana';
+298:             txt.className = enabled ? 'status-bot' : 'status-human';
+299:         }
+300: 
+301:         function updateInputState(botEnabled) {
+302:             const input = document.getElementById('message-input');
+303:             const btn = document.getElementById('send-btn');
+304:             input.disabled = botEnabled;
+305:             btn.disabled = botEnabled;
+306:         }
+307: 
+308:         function formatTime(isoString) {
+309:             if (!isoString) return '';
+310:             const date = new Date(isoString);
+311:             return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+312:         }
+313: 
+314:         async function fetchMessages(chatId) {
+315:             const res = await fetch(`/api/backoffice/messages/${chatId}?token=${token}`);
+316:             const messages = await res.json();
+317:             const container = document.getElementById('messages');
+318:             container.innerHTML = messages.map(m => `
+319:                 <div class="msg ${m.role}">
+320:                     <div class="msg-body">${m.content}</div>
+321:                     <span class="msg-time">${formatTime(m.created_at)}</span>
+322:                 </div>
+323:             `).join('');
+324:             container.scrollTop = container.scrollHeight;
+325:         }
+326: 
+327:         async function toggleBot(enabled) {
+328:             const res = await fetch('/api/backoffice/toggle-bot', {
+329:                 method: 'POST',
+330:                 headers: { 
+331:                     'Content-Type': 'application/json',
+332:                     'Authorization': token
+333:                 },
+334:                 body: JSON.stringify({ chatId: activeChatId, enabled })
+335:             });
+336: 
+337:             if (res.ok) {
+338:                 const chat = chats.find(c => c.id === activeChatId);
+339:                 chat.bot_enabled = enabled;
+340:                 updateBotStatusText(enabled);
+341:                 updateInputState(enabled);
+342:                 renderChatList();
+343:             }
+344:         }
+345: 
+346:         async function sendMessage() {
+347:             const input = document.getElementById('message-input');
+348:             const content = input.value.trim();
+349:             if (!content || !activeChatId) return;
+350: 
+351:             const res = await fetch('/api/backoffice/send-message', {
+352:                 method: 'POST',
+353:                 headers: { 
+354:                     'Content-Type': 'application/json',
+355:                     'Authorization': token
+356:                 },
+357:                 body: JSON.stringify({ chatId: activeChatId, content })
+358:             });
+359: 
+360:             if (res.ok) {
+361:                 input.value = '';
+362:                 fetchMessages(activeChatId);
+363:             } else {
+364:                 const errorData = await res.json();
+365:                 alert('Error al enviar mensaje: ' + (errorData.error || 'Error desconocido'));
+366:             }
+367:         }
+368: 
+369:         function logout() {
+370:             localStorage.removeItem('backoffice_token');
+371:             window.location.href = '/login';
+372:         }
+373: 
+374:         // Auto-refresh lista de chats
+375:         // Auto-refresh lista de chats (cada 30 seg como fallback, socket hace lo pesado)
+376:         setInterval(fetchChats, 30000);
+377:         fetchChats();
+378: 
+379:         // Enter to send
+380:         document.getElementById('message-input').addEventListener('keypress', (e) => {
+381:             if (e.key === 'Enter') sendMessage();
+382:         });
+383:     </script>
+384: </body>
+385: </html>
