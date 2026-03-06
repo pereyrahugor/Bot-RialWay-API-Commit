@@ -15,16 +15,10 @@ const DOCX_FILE_IDS = (process.env.DOCX_ID_UPDATE || "")
 const VECTOR_STORE_ID = process.env.VECTOR_STORE_ID ?? "";
 let currentFileId: string | null = null;
 
-// Construir credenciales desde variables de entorno
-const credentials = {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-};
+import { createGoogleAuth } from "../utils/googleAuth";
 
-const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
-});
+// Construir credenciales usando la utilidad centralizada
+const auth = createGoogleAuth(["https://www.googleapis.com/auth/drive.readonly"]);
 const drive = google.drive({ version: "v3", auth });
 const openai = new OpenAI();
 

@@ -4,6 +4,7 @@ import path from "path";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 import * as glob from "glob";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
@@ -15,29 +16,81 @@ const SHEET_IDS = (process.env.SHEET_ID_UPDATE || "")
 const VECTOR_STORE_ID = process.env.VECTOR_STORE_ID ?? "";
 let currentFileId: string | null = null;
 
-// Construir credenciales desde variables de entorno
-const credentials = {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-};
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
-const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
+import { createGoogleAuth } from "../utils/googleAuth";
+
+// Construir credenciales usando la utilidad centralizada
+const auth = createGoogleAuth(["https://www.googleapis.com/auth/spreadsheets"]);
 
 const sheets = google.sheets({ version: "v4", auth });
 const openai = new OpenAI();
 
 // Función principal para procesar todos los sheets
-export async function updateAllSheets() {
+export async function updateAllSheets(options: { forceRecreate?: boolean } = {}) {
     for (const SHEET_ID of SHEET_IDS) {
-        await processSheetById(SHEET_ID);
+        await processSheetById(SHEET_ID, options);
     }
 }
 
+// Helper function to sanitize valid table name
+const sanitizeTableName = (name: string) => {
+    return name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '');
+};
+
+// Helper function to sanitize column names
+const sanitizeColumnName = (name: string) => {
+    const sanitized = name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '');
+    if (sanitized === 'id') return 'id_';
+    if (sanitized === 'created_at') return 'created_at_';
+    return sanitized;
+};
+
+async function ensureTableExists(tableName: string, headers: string[]) {
+    if (!supabase) return;
+    
+    // Check if table exists by selecting 1 row
+    const check = await supabase.from(tableName).select('*').limit(1);
+    
+    if (check.error && (check.error.code === '42P01' || check.error.code === 'PGRST205')) { // undefined_table or cache miss (table likely missing)
+        console.log(`⚠️ La tabla '${tableName}' no existe. Intentando crearla via RPC...`);
+        
+        // Construct Create Table SQL
+        const columnsSql = headers.map(h => `${sanitizeColumnName(h)} TEXT`).join(', ');
+        const createSql = `CREATE TABLE IF NOT EXISTS ${tableName} (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, ${columnsSql}, created_at TIMESTAMPTZ DEFAULT NOW());`;
+        
+        const rpc = await supabase.rpc('exec_sql', { query: createSql });
+        if (rpc.error) {
+            console.error(`❌ Error al intentar crear la tabla '${tableName}'. Asegúrate de tener una función RPC 'exec_sql' en Supabase.`);
+            console.error("RPC Error Details:", JSON.stringify(rpc.error, null, 2));
+            console.error("Query intentada:", createSql);
+            return false;
+        }
+        console.log(`✅ Tabla '${tableName}' creada exitosamente.`);
+        
+        // Esperar a que el caché del esquema se actualice (PostgREST puede tardar unos segundos)
+        console.log(`⏳ Esperando a que Supabase refresque el caché del esquema para '${tableName}'...`);
+        for (let i = 0; i < 10; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            const recheck = await supabase.from(tableName).select('*').limit(1);
+            if (!recheck.error) {
+                console.log(`✅ Tabla '${tableName}' verificada y visible para la API.`);
+                return true;
+            }
+        }
+        console.warn(`⚠️ La tabla '${tableName}' fue creada pero la API aún no la reconoce. La inserción podría fallar.`);
+        return true;
+    } else if (check.error) {
+        console.error("Error verificando tabla:", check.error);
+        return false;
+    }
+    return true; // Table exists
+}
+
 // Procesa un sheet por ID, obtiene el nombre real y ejecuta la lógica
-async function processSheetById(SHEET_ID: string) {
+async function processSheetById(SHEET_ID: string, options: { forceRecreate?: boolean } = {}) {
     try {
         // Obtener metadatos para el nombre real de la hoja principal
         const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
@@ -111,28 +164,19 @@ async function processSheetById(SHEET_ID: string) {
             .map((row) => {
                 const obj: Record<string, any> = {};
                 headers.forEach((header, idx) => {
-                    let value = (row[idx] || "").trim();
-                    // Si el valor parece un número (con o sin formato de moneda), convertir a number
-                    if (/^\$?\s*[\d.,]+$/.test(value)) {
-                        value = value.replace(/[^\d,]/g, "");
-                        if (value.includes(",")) {
-                            value = value.replace(/\./g, "");
-                            value = value.replace(/,/, ".");
-                        }
-                        const num = Number(value);
-                        obj[header] = isNaN(num) ? value : num;
+                    // Obtener valor crudo. Google Sheets ya devuelve números como números si el formato de celda es automático.
+                    let cellValue = row[idx];
+                    
+                    if (cellValue === undefined || cellValue === null) {
+                        cellValue = "";
+                    }
+
+                    // Si es string, solo hacemos trim.
+                    if (typeof cellValue === "string") {
+                         obj[header] = cellValue.trim();
                     } else {
-                        // Si el valor contiene comas y al menos dos elementos, convertir a array
-                        if (typeof value === "string" && value.includes(",")) {
-                            const arr = value.split(",").map(v => v.trim()).filter(v => v.length > 0);
-                            if (arr.length > 1) {
-                                obj[header] = arr;
-                            } else {
-                                obj[header] = value;
-                            }
-                        } else {
-                            obj[header] = value;
-                        }
+                         // Si es número u otro tipo, lo guardamos tal cual
+                         obj[header] = cellValue;
                     }
                 });
                 return obj;
@@ -148,6 +192,59 @@ async function processSheetById(SHEET_ID: string) {
         const jsonData = JSON.stringify(formattedData, null, 2);
         fs.writeFileSync(TXT_PATH, jsonData, "utf8");
         console.log(`📂 Datos guardados en archivo de texto: ${TXT_PATH}`);
+
+        // --- SUPABASE INTEGRATION START ---
+        if (supabase) {
+            const tableName = sanitizeTableName(SHEET_NAME);
+            const headersSanitized = headers.map(h => sanitizeColumnName(h));
+            
+            if (options.forceRecreate) {
+                console.log(`⚠️ Forzando recreación de tabla '${tableName}' (DROP TABLE)...`);
+                const dropRes = await supabase.rpc('exec_sql', { query: `DROP TABLE IF EXISTS ${tableName}` });
+                if (dropRes.error) {
+                    console.error(`❌ Error al eliminar tabla '${tableName}':`, dropRes.error);
+                } else {
+                    console.log(`✅ Tabla '${tableName}' eliminada para recreación.`);
+                }
+            }
+
+            // Ensure table exists
+            const tableReady = await ensureTableExists(tableName, headersSanitized);
+            
+            if (tableReady) {
+                // Map data to sanitized keys
+                const supabaseData = formattedData.map(row => {
+                    const newRow: any = {};
+                    Object.keys(row).forEach(key => {
+                        newRow[sanitizeColumnName(key)] = row[key];
+                    });
+                    return newRow;
+                });
+                
+                // Limpieza previa: Truncar para reemplazo total
+                const truncateRes = await supabase.rpc('exec_sql', { query: `TRUNCATE TABLE ${tableName}` });
+                
+                if (truncateRes.error) {
+                     // Fallback a DELETE estándar si RPC falla (o no existe)
+                     // console.warn(`[Supabase] Script exec_sql falló, usando DELETE ALL convencional...`);
+                     const { error: delErr } = await supabase.from(tableName).delete().not('id', 'is', null);
+                     if (delErr) console.error(`[Supabase] Error limpiando tabla:`, delErr.message);
+                } else {
+                     console.log(`[Supabase] 🧹 Tabla '${tableName}' truncada correctamente.`);
+                }
+
+                // Insertar nuevos datos (Insert es más rápido que Upsert en tabla vacía)
+                const { error } = await supabase.from(tableName).insert(supabaseData);
+                if (error) {
+                    console.error(`❌ Error uploading to Supabase table '${tableName}':`, error.message);
+                } else {
+                    console.log(`✅ Datos cargados exitosamente en Supabase tabla '${tableName}'.`);
+                }
+            }
+        } else {
+             console.warn("⚠️ No se encontraron credenciales de Supabase (SUPABASE_URL, SUPABASE_KEY). Saltando integración.");
+        }
+        // --- SUPABASE INTEGRATION END ---
 
         // Enviar el archivo de texto al vector store
         const success = await uploadDataToAssistant(TXT_PATH, SHEET_ID);

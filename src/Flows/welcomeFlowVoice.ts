@@ -2,7 +2,7 @@ import { addKeyword, EVENTS } from "@builderbot/bot";
 import { BaileysProvider } from "@builderbot/provider-baileys";
 import { MemoryDB } from "@builderbot/bot";
 import { reset } from "~/utils/timeOut";
-import { handleQueue, userQueues, userLocks } from "~/utils/queueManager";
+import { userQueues, userLocks, handleQueue } from "~/utils/queueManager"; 
 import { transcribeAudioFile } from "~/utils/audioTranscriptior";
 import path from "path";
 import fs from "fs";
@@ -13,28 +13,39 @@ const setTime = Number(process.env.timeOutCierre) * 60 * 1000;
 export const welcomeFlowVoice = addKeyword<BaileysProvider, MemoryDB>(EVENTS.VOICE_NOTE)
     .addAction(async (ctx, { gotoFlow, flowDynamic, state, provider }) => {
         const userId = ctx.from;
-        
+
+        // Filtrar contactos ignorados antes de agregar a la cola
+        if (
+            /@broadcast$/.test(userId) ||
+            /@newsletter$/.test(userId) ||
+            /@channel$/.test(userId) ||
+            /@lid$/.test(userId)
+        ) {
+            console.log(`Mensaje de voz ignorado por filtro de contacto: ${userId}`);
+            return;
+        }
+
         console.log(`🎙️ Mensaje de voz recibido de ${userId}`);
 
         reset(ctx, gotoFlow, setTime);
 
         // Asegurar que userQueues tenga un array inicializado para este usuario
-    if (!userQueues.has(userId)) {
-        userQueues.set(userId, []);
-      }
+        if (!userQueues.has(userId)) {
+            userQueues.set(userId, []);
+        }
 
 
         // 📌 Definir ruta donde se guardarán los audios
-        const audioFolder = path.join("./tmp/voiceNote/");
+        const audioFolder = path.join("./temp/voiceNote/");
 
         // 📌 Crear la carpeta si no existe
         if (!fs.existsSync(audioFolder)) {
             fs.mkdirSync(audioFolder, { recursive: true });
-            console.log("📂 Carpeta 'tmp/voiceNote' creada.");
+            console.log("📂 Carpeta 'temp/voiceNote' creada.");
         }
 
         // Guardar el archivo de audio localmente
-        const localPath = await provider.saveFile(ctx, { path: "./tmp/voiceNote/" });
+        const localPath = await provider.saveFile(ctx, { path: "./temp/voiceNote/" });
         console.log(`📂 Ruta del archivo de audio: ${localPath}`);
 
         // Transcribir el audio antes de procesarlo
@@ -52,8 +63,9 @@ export const welcomeFlowVoice = addKeyword<BaileysProvider, MemoryDB>(EVENTS.VOI
         const queue = userQueues.get(userId);
         queue.push({ ctx, flowDynamic, state, provider, gotoFlow });
 
-        if (!userLocks.get(userId) && queue.length === 1) {
-            await handleQueue(userId);
+        if (!userLocks.get(userId)) {
+            // No usamos await para liberar el webhook del proveedor inmediatamente
+            handleQueue(userId);
         }
 
         // Eliminar el archivo temporal

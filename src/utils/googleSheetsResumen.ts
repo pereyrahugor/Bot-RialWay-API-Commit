@@ -1,22 +1,10 @@
-
 import { google } from "googleapis";
 import moment from "moment";
 import "dotenv/config";
-import fs from "fs";
-import path from "path";
 import { GenericResumenData } from "./extractJsonData";
+import { createGoogleAuth } from "./googleAuth";
 
-
-// Construir credenciales desde variables de entorno
-const credentials = {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-};
-
-const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
+const auth = createGoogleAuth(["https://www.googleapis.com/auth/spreadsheets"]);
 
 // ID de la hoja de cálculo desde .env
 const SHEET_ID = process.env.SHEET_ID_RESUMEN ?? "";

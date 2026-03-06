@@ -1,27 +1,28 @@
 import { addKeyword, EVENTS } from "@builderbot/bot";
 import { BaileysProvider } from "@builderbot/provider-baileys";
 import { MemoryDB } from "@builderbot/bot";
-import { reset } from "~/utils/timeOut";
-import { userQueues, userLocks, handleQueue } from "~/utils/queueManager";
-// Si se define timeOutCierre en minutos en .env, se multiplica por 60*1000 para obtener milisegundos
+import { reset } from "../utils/timeOut";
+import { userQueues, userLocks, handleQueue } from "../utils/queueManager";
+
 const setTime = Number(process.env.timeOutCierre) * 60 * 1000;
 
-export const welcomeFlowTxt = addKeyword<BaileysProvider, MemoryDB>(EVENTS.WELCOME)
+export const welcomeFlowButton = addKeyword<BaileysProvider, MemoryDB>(EVENTS.ACTION)
     .addAction(async (ctx, { gotoFlow, flowDynamic, state, provider }) => {
         const userId = ctx.from;
 
-        // Filtrar contactos ignorados antes de agregar a la cola
+        // Filtrar contactos ignorados
         if (
             /@broadcast$/.test(userId) ||
             /@newsletter$/.test(userId) ||
             /@channel$/.test(userId) ||
             /@lid$/.test(userId)
         ) {
-            console.log(`Mensaje ignorado por filtro de contacto: ${userId}`);
+            console.log(`Botón ignorado por filtro de contacto: ${userId}`);
             return;
         }
 
-        console.log(`📩 Mensaje recibido de :${userId}`);
+        console.log(`🔘 Botón recibido de :${userId}`);
+        console.log(`Cuerpo del botón: ${ctx.body}`);
 
         reset(ctx, gotoFlow, setTime);
 
@@ -37,7 +38,9 @@ export const welcomeFlowTxt = addKeyword<BaileysProvider, MemoryDB>(EVENTS.WELCO
             return;
         }
 
-        console.log("📝 Mensaje de texto recibido");
+        console.log("📝 Procesando interacción de botón");
+
+        // Agregamos a la cola para que el asistente lo procese
         queue.push({ ctx, flowDynamic, state, provider, gotoFlow });
 
         if (!userLocks.get(userId)) {

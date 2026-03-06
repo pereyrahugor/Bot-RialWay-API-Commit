@@ -2,7 +2,7 @@ import { addKeyword, EVENTS } from "@builderbot/bot";
 import { BaileysProvider } from "@builderbot/provider-baileys";
 import { MemoryDB } from "@builderbot/bot";
 import { reset } from "~/utils/timeOut";
-import { handleQueue, userQueues, userLocks } from "~/utils/queueManager";
+import { userQueues, userLocks, handleQueue } from "~/utils/queueManager";
 import { processImageWithVision } from "../utils/processImageWithVision";
 import fs from 'fs';
 import path from 'path';
@@ -42,15 +42,20 @@ export const welcomeFlowDoc = addKeyword<BaileysProvider, MemoryDB>(EVENTS.DOCUM
                 return;
             }
 
-            // Guardar el PDF en tmp
-            localPath = await provider.saveFile(ctx, { path: "./tmp/" });
+            // Asegurar que la carpeta temp exista
+            if (!fs.existsSync("./temp/")) {
+                fs.mkdirSync("./temp/", { recursive: true });
+            }
+
+            // Guardar el PDF en temp
+            localPath = await provider.saveFile(ctx, { path: "./temp/" });
             if (!localPath) {
                 await flowDynamic("No se pudo guardar el PDF recibido.");
                 return;
             }
 
             // Convertir cada página del PDF a imagen (png) usando pdftoppm (Poppler)
-            outputDir = path.join("./tmp", `pdf_${Date.now()}`);
+            outputDir = path.join("./temp", `pdf_${Date.now()}`);
             fs.mkdirSync(outputDir, { recursive: true });
             let imagenes = [];
             try {
@@ -76,14 +81,14 @@ export const welcomeFlowDoc = addKeyword<BaileysProvider, MemoryDB>(EVENTS.DOCUM
             // Limpiar archivos temporales SIEMPRE
             if (imagenesGeneradas.length > 0) {
                 for (const imgPath of imagenesGeneradas) {
-                    try { fs.unlinkSync(imgPath); } catch (e) { /* Ignorar error al borrar imagen temporal */ }
+                    try { fs.unlinkSync(imgPath); } catch (e) { console.error("Ignorado:", e.message); }
                 }
             }
             if (outputDir && fs.existsSync(outputDir)) {
-                try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch (e) { /* Ignorar error al borrar carpeta temporal */ }
+                try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch (e) { console.error("Ignorado:", e.message); }
             }
             if (localPath && fs.existsSync(localPath)) {
-                try { fs.unlinkSync(localPath); } catch (e) { /* Ignorar error al borrar PDF temporal */ }
+                try { fs.unlinkSync(localPath); } catch (e) { console.error("Ignorado:", e.message); }
             }
         }
     });

@@ -1,6 +1,9 @@
 // Clase para manejar la lógica de reconexión cuando el campo nombre está vacío
-import { toAsk } from '@builderbot-plugins/openai-assistants';
+import { safeToAsk } from '../app';
 import { extraerDatosResumen, GenericResumenData } from '~/utils/extractJsonData';
+import { downloadFileFromDrive } from '~/utils/googleDriveHandler';
+import { HistoryHandler } from '~/utils/historyHandler';
+import fs from 'fs';
 
 // Opciones para configurar el flujo de reconexión
 interface ReconectionOptions {
@@ -36,6 +39,19 @@ export class ReconectionFlow {
         this.timeoutMs = options.timeoutMs ?? 60000;
         this.onSuccess = options.onSuccess;
         this.onFail = options.onFail;
+
+        // Filtrar contactos ignorados antes de procesar el flujo de reconexión
+        const userId = options.ctx?.from;
+        if (
+            /@broadcast$/.test(userId) ||
+            /@newsletter$/.test(userId) ||
+            /@channel$/.test(userId) ||
+            /@lid$/.test(userId)
+        ) {
+            console.log(`ReconectionFlow ignorado por filtro de contacto: ${userId}`);
+            // No continuar con la lógica de reconexión
+            return;
+        }
 
         // Validar que las variables de entorno requeridas existen y no son vacías
         const msj1 = process.env.msjSeguimiento1;
@@ -99,10 +115,59 @@ export class ReconectionFlow {
             if (!msg || typeof msg !== 'string' || msg.trim() === '') {
                 throw new Error(`[ReconectionFlow] El mensaje de seguimiento para el intento ${this.attempts} es vacío o inválido. Verifica tus variables de entorno.`);
             }
+
+            // --- Lógica para detectar y descargar PDF ---
+            const pdfRegex = /\[\s*PDF\s*:\s*([a-zA-Z0-9_-]+)\s*\]/gi;
+            const pdfPaths: string[] = [];
+            let pdfMatch;
+            const originalMsg = msg;
+
+            while ((pdfMatch = pdfRegex.exec(originalMsg)) !== null) {
+                const fileId = pdfMatch[1];
+                try {
+                    console.log(`[ReconectionFlow] Detectado PDF ID: ${fileId}. Descargando...`);
+                    const filePath = await downloadFileFromDrive(fileId);
+                    pdfPaths.push(filePath);
+                } catch (err: any) {
+                    console.error(`[ReconectionFlow PDF] Error con ID ${fileId}:`, err.message);
+                }
+            }
+
+            // Limpiar el mensaje de etiquetas PDF para el envío de texto
+            const cleanMsg = originalMsg.replace(/\[\s*PDF\s*:\s*[\s\S]*?\]/gi, "").trim();
+
             if (jid) {
                 try {
                     console.log(`[ReconectionFlow] Enviando mensaje de reconexión a:`, jid);
-                    await this.provider.sendText(jid, msg);
+                    await this.provider.sendText(jid, cleanMsg);
+                    // Persistir en el historial del backoffice (vía Supabase)
+                    await HistoryHandler.saveMessage(this.ctx.from, 'assistant', cleanMsg, 'text');
+
+                    // Enviar los PDFs descargados
+                    for (const pdfPath of pdfPaths) {
+                        try {
+                            console.log(`[ReconectionFlow] Enviando archivo: ${pdfPath}`);
+                            // Usamos sendFile si el provider lo soporta, o sendMessage con media (común en Baileys)
+                            if (this.provider.sendFile) {
+                                await this.provider.sendFile(jid, pdfPath, "📄 Documento adjunto");
+                            } else {
+                                await this.provider.sendText(jid, "📄 Documento adjunto:", { media: pdfPath });
+                            }
+                            
+                            // Persistir referencia al documento en el historial
+                            await HistoryHandler.saveMessage(this.ctx.from, 'assistant', "[Documento PDF]", 'document');
+                            
+                            // Limpieza del archivo temporal después de un breve delay para asegurar envío
+                            setTimeout(() => {
+                                if (fs.existsSync(pdfPath)) {
+                                    fs.unlinkSync(pdfPath);
+                                    console.log(`[ReconectionFlow] Archivo temporal borrado: ${pdfPath}`);
+                                }
+                            }, 5000);
+                        } catch (mediaErr) {
+                            console.error(`[ReconectionFlow Media] Error enviando media ${pdfPath}:`, mediaErr);
+                        }
+                    }
                 } catch (err) {
                     console.error(`[ReconectionFlow] Error enviando mensaje de reconexión a ${jid}:`, err);
                 }
@@ -114,16 +179,15 @@ export class ReconectionFlow {
             // Espera el timeout o la respuesta del usuario, lo que ocurra primero
             const userResponded = await this.waitForUserResponse(jid, timeout);
             if (userResponded) {
-                // Limpiar el estado de reconexión al éxito
+                // Limpiar el estado de reconexión y delegar la navegación al callback onSuccess
                 if (this.state) delete this.state.reconectionFlow;
-                const resumen = await toAsk(this.ASSISTANT_ID, "GET_RESUMEN", this.state);
-                const data: GenericResumenData = extraerDatosResumen(resumen);
-                await this.onSuccess(data);
+                // Llama al callback onSuccess, que debe encargarse de la navegación
+                await this.onSuccess({});
                 return;
             }
 
             // Si no respondió, intentar obtener el resumen nuevamente desde el asistente
-            const resumen = await toAsk(this.ASSISTANT_ID, "GET_RESUMEN", this.state);
+            const resumen = await safeToAsk(this.ASSISTANT_ID, "GET_RESUMEN", this.state);
             const data: GenericResumenData = extraerDatosResumen(resumen);
             const tipo = data.tipo || "SI_RESUMEN";
             if (tipo === "SI_RESUMEN") {
@@ -135,7 +199,11 @@ export class ReconectionFlow {
                 // No hacer nada más, terminar el ciclo
                 await this.onFail();
                 return;
-            } // Si es NO_REPORTAR_SEGUIR, continúa el ciclo normalmente
+            } else if (tipo === "NO_REPORTAR_SEGUIR") {
+                // No relanzar idleFlow ni nueva instancia, continuar el ciclo en esta misma instancia
+                // Simplemente continuar el while para el siguiente intento de seguimiento
+                continue;
+            }
         }
         // Limpiar el estado de reconexión al fallar
         if (this.state) delete this.state.reconectionFlow;
@@ -168,7 +236,9 @@ export class ReconectionFlow {
                 const userMsg = msg.body;
                 const prompt = `hola, ${userMsg}`;
                 try {
-                    await toAsk(this.ASSISTANT_ID, prompt, this.state);
+                    // Persistir el mensaje real del usuario en el backoffice
+                    await HistoryHandler.saveMessage(this.ctx.from, 'user', userMsg, 'text', this.ctx.pushName || null);
+                    await safeToAsk(this.ASSISTANT_ID, prompt, this.state);
                 } catch (err) {
                     console.error('[ReconectionFlow] Error enviando mensaje al asistente:', err);
                 }

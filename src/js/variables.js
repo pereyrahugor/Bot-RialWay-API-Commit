@@ -1,10 +1,10 @@
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('Variables panel loaded');
-
+    
     const cancelBtn = document.getElementById('cancel-btn');
     const variablesForm = document.getElementById('variables-form');
     const updateBtn = document.getElementById('update-btn');
-
+    
     let initialVariables = {};
 
     // Cargar variables actuales
@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             const response = await fetch('/api/variables');
             const data = await response.json();
-
+            
             if (data.success && data.variables) {
                 initialVariables = data.variables;
                 // Poblar el formulario
@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         button.addEventListener('click', () => {
             const wrapper = button.closest('.input-wrapper');
             const input = wrapper.querySelector('input, textarea');
-
+            
             if (input.tagName.toLowerCase() === 'input') {
                 const type = input.getAttribute('type') === 'password' ? 'text' : 'password';
                 input.setAttribute('type', type);
@@ -46,7 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // Para textarea (GOOGLE_PRIVATE_KEY)
                 input.classList.toggle('hidden-content');
             }
-
+            
             // Cambiar el icono (opcional)
             button.textContent = button.textContent === '👁️' ? '🙈' : '👁️';
         });
@@ -60,11 +60,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Manejo del formulario
     variablesForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-
+        
         const formData = new FormData(variablesForm);
         const changedVariables = {};
         const changedKeys = [];
-
+        
         formData.forEach((value, key) => {
             // Solo agregar si el valor es diferente al inicial
             if (value !== initialVariables[key]) {
@@ -79,7 +79,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         const confirmMsg = `Se han modificado las siguientes variables:\n\n${changedKeys.join('\n')}\n\nEl bot se reiniciará automáticamente para aplicar los cambios. ¿Deseas continuar?`;
-
+        
         if (!confirm(confirmMsg)) {
             return;
         }

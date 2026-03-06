@@ -20,19 +20,35 @@ import { addKeyword, EVENTS } from "@builderbot/bot";
 import { ErrorReporter } from "../utils/errorReporter";
 
 import { welcomeFlowTxt } from "./welcomeFlowTxt";
-import axios from "axios";
+import { welcomeFlowVideo } from "./welcomeFlowVideo";
 import { OpenAI } from "openai";
 import { reset } from "../utils/timeOut";
-import { handleQueue, userQueues, userLocks } from "~/utils/queueManager";
+import { userQueues, userLocks, handleQueue } from "../utils/queueManager";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY_IMG });
-const IMGUR_CLIENT_ID = "dbe415c6bbb950d";
 const setTime = Number(process.env.timeOutCierre) * 60 * 1000;
-
 
 const welcomeFlowImg = addKeyword(EVENTS.MEDIA).addAction(
   async (ctx, { flowDynamic, provider, gotoFlow, state }) => {
     const userId = ctx.from;
+
+    // Verificar si es una imagen (y no un video)
+    const mimetype = ctx?.media?.mimetype || ctx?.message?.imageMessage?.mimetype || "";
+    if (mimetype.includes('video')) {
+        return gotoFlow(welcomeFlowVideo);
+    }
+
+    // Filtrar contactos ignorados antes de agregar a la cola
+    if (
+      /@broadcast$/.test(userId) ||
+      /@newsletter$/.test(userId) ||
+      /@channel$/.test(userId) ||
+      /@lid$/.test(userId)
+    ) {
+      console.log(`Mensaje de imagen ignorado por filtro de contacto: ${userId}`);
+      return;
+    }
+
     reset(ctx, gotoFlow, setTime);
 
     // Asegurar que userQueues tenga un array inicializado para este usuario
@@ -52,87 +68,68 @@ const welcomeFlowImg = addKeyword(EVENTS.MEDIA).addAction(
         await flowDynamic("No se encontró el provider para descargar la imagen.");
         return;
       }
-      const localPath = await provider.saveFile(ctx, { path: "./tmp/" });
+      
+      // Asegurar que la carpeta temp exista
+      if (!fs.default.existsSync("./temp/")) {
+        fs.default.mkdirSync("./temp/", { recursive: true });
+      }
+      
+      // Usar ./temp/ en lugar de ./tmp/ para consistencia
+      const localPath = await provider.saveFile(ctx, { path: "./temp/" });
       if (!localPath) {
         await flowDynamic("No se pudo guardar la imagen recibida.");
         return;
       }
-      const buffer = fs.default.readFileSync(localPath);
-      const imgurRes = await axios.post(
-        "https://api.imgur.com/3/image",
-        {
-          image: buffer.toString("base64"),
-          type: "base64",
-        },
-        {
-          headers: {
-            Authorization: `Client-ID ${IMGUR_CLIENT_ID}`,
-          },
+
+      // Eliminar imagen anterior si existe para no acumular archivos
+      const oldImage = state.get('lastImage');
+      if (oldImage && typeof oldImage === 'string' && fs.default.existsSync(oldImage)) {
+        try {
+          fs.default.unlinkSync(oldImage);
+          console.log(`🗑️ Imagen anterior eliminada: ${oldImage}`);
+        } catch (e) {
+          console.error(`❌ Error eliminando imagen anterior: ${oldImage}`, e);
         }
-      );
-      const imgUrl = imgurRes.data.data.link;
-      const assistantId = process.env.ASSISTANT_ID_IMG;
-      if (!assistantId) {
-        await flowDynamic("No se encontró el ASSISTANT_ID_IMG en las variables de entorno.");
-        return;
       }
-      const thread = await openai.beta.threads.create({
+
+      await state.update({ lastImage: localPath });
+      const buffer = fs.default.readFileSync(localPath);
+      
+      console.log("Analizando imagen con GPT-4o...");
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
         messages: [
           {
             role: "user",
             content: [
-              { type: "image_url", image_url: { url: imgUrl } },
+              { type: "text", text: "Describe esta imagen detalladamente para que el asistente pueda entender su contenido y responder al usuario." },
+              {
+                type: "image_url",
+                image_url: { url: `data:image/jpeg;base64,${buffer.toString("base64")}` },
+              },
             ],
           },
         ],
       });
-      const run = await openai.beta.threads.runs.create(thread.id, {
-        assistant_id: assistantId,
-      });
-      let runStatus;
-      do {
-        await new Promise((res) => setTimeout(res, 2000));
-        runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
-      } while (runStatus.status !== "completed" && runStatus.status !== "failed");
-      if (runStatus.status === "failed") {
-        await flowDynamic("El asistente falló al procesar la imagen.");
-        return;
-      }
-      const messages = await openai.beta.threads.messages.list(thread.id);
-      const resultMsg = messages.data.find((msg) => msg.role === "assistant");
-      let result = "No se obtuvo respuesta del asistente.";
-      if (resultMsg && Array.isArray(resultMsg.content)) {
-        const textBlock = resultMsg.content.find(
-          (block): block is { type: "text"; text: { value: string; annotations: any[] } } =>
-            block.type === "text" &&
-            typeof (block as any).text?.value === "string" &&
-            Array.isArray((block as any).text?.annotations)
-        );
-        if (
-          textBlock &&
-          typeof textBlock.text?.value === "string" &&
-          Array.isArray(textBlock.text?.annotations)
-        ) {
-          result = textBlock.text.value;
-        }
-      }
+
+      const result = response.choices[0].message.content || "No se pudo obtener una descripción de la imagen.";
+
       // Enviar el mensaje al asistente principal para que lo procese y mantenga el contexto
-      ctx.body = `Se recibio una imagen con la siguiente información: ${result}`;
+      ctx.body = `[Imagen recibida]: ${result}`;
+
       // Reencolar el mensaje para que lo procese el flujo principal (texto)
       if (!userQueues.has(userId)) {
         userQueues.set(userId, []);
       }
       userQueues.get(userId).push({ ctx, flowDynamic, state, provider, gotoFlow });
-      if (!userLocks.get(userId) && userQueues.get(userId).length === 1) {
-        await handleQueue(userId);
+      
+      if (!userLocks.get(userId)) {
+        // No usamos await para liberar el webhook del proveedor inmediatamente
+        handleQueue(userId);
       }
-      fs.default.unlink(localPath, (err) => {
-        if (err) {
-          console.error(`❌ Error al eliminar el archivo: ${localPath}`, err);
-        } else {
-          console.log(`🗑️ Archivo eliminado: ${localPath}`);
-        }
-      });
+
+      
+      console.log(`💾 Imagen guardada para resumen: ${localPath}`);
     } catch (err) {
       console.error("Error procesando imagen:", err);
       await flowDynamic("Ocurrió un error al analizar la imagen. Intenta más tarde.");
