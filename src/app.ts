@@ -74,8 +74,50 @@ const TIMEOUT_MS = 30000;
 // Control de timeout por usuario para evitar ejecuciones automáticas superpuestas
 const userTimeouts = new Map();
 
+/**
+ * Capa 3: Renovación de Hilo
+ * Si tras los reintentos el hilo sigue bloqueado, creamos uno nuevo con el contexto reciente.
+ */
+const renewThreadAndRetry = async (assistantId: string, message: string, state: any, userId: string): Promise<any> => {
+    try {
+        console.log(`[RenewThread] Iniciando renovación de hilo para ${userId}...`);
+        if (errorReporter) {
+            const userLink = `https://wa.me/${userId.replace(/[^0-9]/g, '')}`;
+            await errorReporter.reportError(
+                new Error(`Hilo bloqueado. Iniciando renovación automática para no perder al usuario.`), 
+                userId,
+                userLink
+            );
+        }
+
+        // 1. Obtener los últimos 10 mensajes (ya ordenados cronológicamente por HistoryHandler)
+        const history = await HistoryHandler.getMessages(userId, 10);
+        
+        // 2. Crear nuevo hilo en OpenAI con ese contexto
+        const newThread = await openaiMain.beta.threads.create({
+            messages: history.map(m => ({ 
+                role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+                content: m.content 
+            }))
+        });
+
+        console.log(`[RenewThread] Nuevo hilo creado: ${newThread.id} para ${userId}`);
+
+        // 3. Actualizar estado y reintentar
+        if (state && typeof state.update === 'function') {
+            await state.update({ thread_id: newThread.id });
+        }
+        
+        // Reintentamos una vez más con el nuevo hilo (directamente a toAsk)
+        return await toAsk(assistantId, message, state);
+    } catch (error) {
+        console.error(`[RenewThread] Error fatal al renovar hilo para ${userId}:`, error);
+        throw error;
+    }
+};
+
 // Wrapper seguro para toAsk que SIEMPRE verifica runs activos
-export const safeToAsk = async (assistantId: string, message: string, state: any, maxRetries: number = 3) => {
+export const safeToAsk = async (assistantId: string, message: string, state: any, userId?: string, maxRetries: number = 5) => {
     let attempt = 0;
     while (attempt < maxRetries) {
         const threadId = state && typeof state.get === 'function' && state.get('thread_id');
@@ -94,21 +136,25 @@ export const safeToAsk = async (assistantId: string, message: string, state: any
             const errorMessage = err?.message || String(err);
             console.error(`[safeToAsk] Error en toAsk al contactar OpenAI (Intento ${attempt}/${maxRetries}):`, errorMessage);
             
-            // Estrategia 3 de Gemini: Detectar run activo y cancelarlo proactivamente
-            if (errorMessage.includes("active") && errorMessage.includes("run_")) {
-                const runIdMatch = errorMessage.match(/run_([a-zA-Z0-9]+)/);
-                if (runIdMatch && threadId) {
+            // Capa 2: Detectar run activo y cancelarlo proactivamente
+            if (errorMessage.includes('while a run') && errorMessage.includes('is active') && threadId) {
+                const runIdMatch = errorMessage.match(/run_[a-zA-Z0-9]+/);
+                if (runIdMatch) {
                     const activeRunId = runIdMatch[0];
-                    console.log(`[safeToAsk] Detectado error de run activo. Intentando cancelar ${activeRunId}...`);
+                    console.log(`[safeToAsk] Detectado error de run activo (${activeRunId}). Intentando cancelación proactiva...`);
                     await cancelRun(threadId, activeRunId);
-                    // No incrementamos significativamente el tiempo de espera aquí ya que cancelRun ya esperó
-                    await new Promise(r => setTimeout(r, 1000));
-                    continue; // Reintentar inmediatamente tras la cancelación
+                    await new Promise(r => setTimeout(r, 3000));
+                    continue; // Reintento inmediato tras cancelación
                 }
             }
 
             if (attempt >= maxRetries) {
-                console.error(`[safeToAsk] Fallo definitivo tras ${maxRetries} intentos.`);
+                if (userId) {
+                    // Capa 3: Renovación de hilo si todo falla
+                    console.log(`[safeToAsk] Agotado reintentos. Intentando renovación de hilo para ${userId}...`);
+                    return await renewThreadAndRetry(assistantId, message, state, userId);
+                }
+                console.error(`[safeToAsk] Fallo definitivo tras ${maxRetries} intentos sin userId para renovar.`);
                 throw err;
             }
             
@@ -141,14 +187,14 @@ export const getAssistantResponse = async (assistantId, message, state, fallback
         timeoutResolve = resolve;
         const timeoutId = setTimeout(async () => {
             console.warn("⏱ Timeout alcanzado. Reintentando con mensaje de control...");
-            resolve(await safeToAsk(assistantId, fallbackMessage ?? finalMessage, state));
+            resolve(await safeToAsk(assistantId, fallbackMessage ?? finalMessage, state, userId));
             userTimeouts.delete(userId);
         }, TIMEOUT_MS);
         userTimeouts.set(userId, timeoutId);
     });
 
     // Lanzamos la petición a OpenAI, pasando thread_id si existe
-    const askPromise = safeToAsk(assistantId, finalMessage, state).then((result) => {
+    const askPromise = safeToAsk(assistantId, finalMessage, state, userId).then((result) => {
         if (userTimeouts.has(userId)) {
             clearTimeout(userTimeouts.get(userId));
             userTimeouts.delete(userId);

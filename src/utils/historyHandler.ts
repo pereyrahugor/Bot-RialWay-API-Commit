@@ -276,11 +276,11 @@ export class HistoryHandler {
                 .select('*')
                 .eq('chat_id', chatId)
                 .eq('project_id', PROJECT_ID)
-                .order('created_at', { ascending: true })
+                .order('created_at', { ascending: false })
                 .limit(limit);
             
             if (error) throw error;
-            return data;
+            return (data || []).reverse(); // Invertir para orden cronológico
         } catch (err) {
             console.error('[HistoryHandler] Error en getMessages:', err);
             return [];

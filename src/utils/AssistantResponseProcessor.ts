@@ -56,7 +56,7 @@ export async function waitForActiveRuns(threadId: string) {
     try {
         console.log(`[AssistantResponseProcessor] Verificando runs activos en thread ${threadId}...`);
         let attempt = 0;
-        const maxAttempts = 15; // Reducido para no bloquear tanto tiempo
+        const maxAttempts = 10; // Suficientes intentos antes de desistir
         while (attempt < maxAttempts) {
             const runs = await openai.beta.threads.runs.list(threadId, { limit: 5 });
             const activeRun = runs.data.find(run => 
@@ -64,12 +64,12 @@ export async function waitForActiveRuns(threadId: string) {
             );
             
             if (activeRun) {
-                // Estrategia: Si está en 'requires_action' durante más de 3 intentos, es probable que se haya quedado huérfano
-                if (activeRun.status === "requires_action" && attempt > 3) {
-                    console.warn(`[AssistantResponseProcessor] Run ${activeRun.id} atascado en requires_action. Cancelando de forma proactiva.`);
+                // Estrategia: Si está en 'requires_action' durante más de 2 intentos, lo cancelamos proactivamente
+                if (activeRun.status === "requires_action" && attempt >= 2) {
+                    console.warn(`[AssistantResponseProcessor] Run ${activeRun.id} estancado en requires_action. Cancelando de forma proactiva.`);
                     await cancelRun(threadId, activeRun.id);
-                    // Tras cancelar, volvemos a verificar el estado
-                    continue;
+                    // Tras cancelar, retornamos para permitir el reintento desde la capa superior (safeToAsk)
+                    return;
                 }
 
                 console.log(`[AssistantResponseProcessor] [${attempt}/${maxAttempts}] Run activo detectado (${activeRun.id}, estado: ${activeRun.status}). Esperando 2s...`);
