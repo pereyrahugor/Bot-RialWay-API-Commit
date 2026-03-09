@@ -382,9 +382,9 @@ export class AssistantResponseProcessor {
                     });
                 } else if (tipo === "cancel_event") {
                     apiResponse = await CalendarEvents.deleteEvent(jsonData.id);
-                } else if (tipo === "#BUSCAR_PRODUCTO#") {
-                    const payload = jsonData.payload || jsonData.data || {};
-                    apiResponse = await searchProduct(payload);
+                // } else if (tipo === "#BUSCAR_PRODUCTO#") {
+                //     const payload = jsonData.payload || jsonData.data || {};
+                //     apiResponse = await searchProduct(payload);
                 } else if (tipo === "#BUSCAR_PRODUCTO_LISTA#") {
                     let payload = jsonData.payload || jsonData.data || {};
                     if (payload.buscar !== undefined || payload.lista !== undefined) {
