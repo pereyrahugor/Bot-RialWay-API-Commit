@@ -390,7 +390,7 @@ export class AssistantResponseProcessor {
                     if (payload.buscar !== undefined || payload.lista !== undefined) {
                         payload = {
                             searchData: payload.buscar || "",
-                            numeroDeListaDePrecio: payload.lista || 0
+                            numeroDeListaDePrecios: payload.lista || 0
                         };
                     }
                     apiResponse = await searchProductsWithPrice(payload);
@@ -399,7 +399,7 @@ export class AssistantResponseProcessor {
                     if (payload.buscar !== undefined || payload.lista !== undefined) {
                         payload = {
                             searchData: payload.buscar || "",
-                            numeroDeListaDePrecio: payload.lista || 0
+                            numeroDeListaDePrecios: payload.lista || 0
                         };
                     }
                     apiResponse = await getProductByCodeWithPrice(payload);
