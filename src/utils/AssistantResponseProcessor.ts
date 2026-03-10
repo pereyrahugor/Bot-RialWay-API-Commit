@@ -200,6 +200,7 @@ export class AssistantResponseProcessor {
             }
         }
         let jsonData: any = null;
+        let jsonContent: string = "";
         // Sanitización y normalización del texto de respuesta
         const textResponseRaw = typeof response === "string" ? response : String(response || "");
         const textResponse = textResponseRaw.replace(/\0/g, '').trim();
@@ -320,7 +321,7 @@ export class AssistantResponseProcessor {
         const apiBlockRegex = /\[\s*API\s*\]([\s\S]*?)\[\/\s*API\s*\]/is;
         const match = sanitizedTextResponse.match(apiBlockRegex);
         if (match) {
-            let jsonContent = match[1].trim();
+            jsonContent = match[1].trim();
             console.log('[Debug] Bloque [API] detectado:', jsonContent);
             
             // Intentar extraer solo el JSON si hay texto adicional dentro de las etiquetas
@@ -341,7 +342,15 @@ export class AssistantResponseProcessor {
                         .replace(/'/g, '"'); // Cambiar comillas simples por dobles
                     jsonData = JSON.parse(repairedJson);
                 } catch (e2) {
-                    jsonData = null;
+                    // Intento de rescate manual detectando el tipo si el JSON está muy roto
+                    const typeMatch = jsonContent.match(/"type"\s*:\s*"([^"]+)"/i);
+                    if (typeMatch) {
+                        jsonData = { type: typeMatch[1], data: {} };
+                        const listaMatch = jsonContent.match(/"lista"\s*:\s*(?:(\d+)|"(\d+)")/i);
+                        if (listaMatch) jsonData.data.lista = parseInt(listaMatch[1] || listaMatch[2]);
+                    } else {
+                        jsonData = null;
+                    }
                 }
             }
         }
@@ -386,23 +395,79 @@ export class AssistantResponseProcessor {
                 //     const payload = jsonData.payload || jsonData.data || {};
                 //     apiResponse = await searchProduct(payload);
                 } else if (tipo === "#BUSCAR_PRODUCTO_LISTA#") {
-                    let payload = jsonData.payload || jsonData.data || {};
-                    if (payload.buscar !== undefined || payload.lista !== undefined) {
-                        payload = {
-                            searchData: payload.buscar || "",
-                            numeroDeListaDePrecios: payload.lista || 0
-                        };
+                    let data = jsonData.payload || jsonData.data || {};
+                    const lista = data.lista || 0;
+                    
+                    // Extraer términos: soportar array, duplicados o formato lista manual
+                    let busquedas: string[] = [];
+                    if (Array.isArray(data.buscar)) {
+                        busquedas = data.buscar.map(b => String(b));
+                    } else {
+                        // Regex para todos los "buscar" en el crudo por si vienen duplicados o en formato extraño
+                        const buscarRegex = /"buscar"\s*:\s*(?:\[([\s\S]*?)\]|"([^"]*)"|'([^']*)')/gi;
+                        let m;
+                        while ((m = buscarRegex.exec(jsonContent)) !== null) {
+                            if (m[1]) busquedas.push(...m[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, '')));
+                            else busquedas.push(m[2] || m[3]);
+                        }
+                        if (busquedas.length === 0 && data.buscar) busquedas.push(String(data.buscar));
                     }
-                    apiResponse = await searchProductsWithPrice(payload);
+
+                    busquedas = [...new Set(busquedas)].map(b => b.trim()).filter(b => b.length > 0 && b.toLowerCase() !== "nombre de producto");
+
+                    if (busquedas.length > 1) {
+                        const results = [];
+                        for (const query of busquedas) {
+                            try {
+                                const res = await searchProductsWithPrice({ searchData: query, numeroDeListaDePrecios: lista });
+                                results.push({ llamada: `Producto: ${query}`, resultado: res });
+                            } catch (e) {
+                                results.push({ llamada: `Producto: ${query}`, error: e.message });
+                            }
+                        }
+                        apiResponse = { info: "Resultados para múltiples productos", items: results };
+                    } else {
+                        apiResponse = await searchProductsWithPrice({
+                            searchData: busquedas[0] || "",
+                            numeroDeListaDePrecios: lista
+                        });
+                    }
                 } else if (tipo === "#BUSCAR_CODIGO_LISTA#") {
-                    let payload = jsonData.payload || jsonData.data || {};
-                    if (payload.buscar !== undefined || payload.lista !== undefined) {
-                        payload = {
-                            searchData: payload.buscar || "",
-                            numeroDeListaDePrecios: payload.lista || 0
-                        };
+                    let data = jsonData.payload || jsonData.data || {};
+                    const lista = data.lista || 0;
+                    
+                    let busquedas: string[] = [];
+                    if (Array.isArray(data.buscar)) {
+                        busquedas = data.buscar.map(b => String(b));
+                    } else {
+                        const buscarRegex = /"buscar"\s*:\s*(?:\[([\s\S]*?)\]|"([^"]*)"|'([^']*)')/gi;
+                        let m;
+                        while ((m = buscarRegex.exec(jsonContent)) !== null) {
+                            if (m[1]) busquedas.push(...m[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, '')));
+                            else busquedas.push(m[2] || m[3]);
+                        }
+                        if (busquedas.length === 0 && data.buscar) busquedas.push(String(data.buscar));
                     }
-                    apiResponse = await getProductByCodeWithPrice(payload);
+
+                    busquedas = [...new Set(busquedas)].map(b => b.trim()).filter(b => b.length > 0 && b.toLowerCase() !== "nombre de producto");
+
+                    if (busquedas.length > 1) {
+                        const results = [];
+                        for (const query of busquedas) {
+                            try {
+                                const res = await getProductByCodeWithPrice({ searchData: query, numeroDeListaDePrecios: lista });
+                                results.push({ llamada: `Código: ${query}`, resultado: res });
+                            } catch (e) {
+                                results.push({ llamada: `Código: ${query}`, error: e.message });
+                            }
+                        }
+                        apiResponse = { info: "Resultados para múltiples códigos", items: results };
+                    } else {
+                        apiResponse = await getProductByCodeWithPrice({
+                            searchData: busquedas[0] || "",
+                            numeroDeListaDePrecios: lista
+                        });
+                    }
                 } else if (tipo === "#BUSCAR_CLIENTE#") {
                     const payload = jsonData.payload || jsonData.data || {};
                     apiResponse = await searchClient(payload);
