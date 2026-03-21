@@ -120,11 +120,13 @@ async function sendMessage() {
     autosizeSmart(textarea)
 
     try {
-        const res = await fetch('/webchat-api', {
+        const token = localStorage.getItem('backoffice_token');
+        const res = await fetch(`/webchat-api?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: msg })
         })
+        if (res.status === 401) return logout();
         const data = await res.json()
         addMessage(data.reply, 'bot')
     } catch (err) {
@@ -208,12 +210,16 @@ if (fileInput) {
             addMessage(`${displayType} ${filename}`, 'user');
             fileInput.value = '';
 
-            fetch('/webchat-api', {
+            const token = localStorage.getItem('backoffice_token');
+            fetch(`/webchat-api?token=${token}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(msgPayload)
-            }).then(res => res.json()).then(data => {
-                if (data.reply) addMessage(data.reply, 'bot');
+            }).then(res => {
+                if (res.status === 401) return logout();
+                return res.json();
+            }).then(data => {
+                if (data && data.reply) addMessage(data.reply, 'bot');
             }).catch(err => {
                 addMessage('Hubo un error procesando tu archivo.', 'bot');
             });

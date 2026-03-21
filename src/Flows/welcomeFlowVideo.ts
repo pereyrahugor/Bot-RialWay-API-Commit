@@ -64,15 +64,16 @@ const welcomeFlowVideo = addKeyword(EVENTS.MEDIA).addAction(
       await state.update({ lastVideo: localPath });
 
       // Informar al asistente principal
-      ctx.body = `Se recibió un video. (El usuario envió un video que ha sido guardado)`;
+      const caption = ctx.body && !ctx.body.includes('_event_') ? ctx.body : '';
+      ctx.body = `[Video recibido]${caption ? ': ' + caption : ''}. (El usuario envió un video que ha sido guardado)`;
+
       
       if (!userQueues.has(userId)) {
         userQueues.set(userId, []);
       }
       userQueues.get(userId).push({ ctx, flowDynamic, state, provider, gotoFlow });
-      if (!userLocks.get(userId)) {
-        // No usamos await para liberar el webhook del proveedor inmediatamente
-        handleQueue(userId);
+      if (!userLocks.get(userId) && userQueues.get(userId).length === 1) {
+        await handleQueue(userId);
       }
       
       console.log(`💾 Video guardado: ${localPath}`);

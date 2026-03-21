@@ -16,23 +16,25 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   si.addEventListener('click', async () => {
-    modal.classList.add('hidden');
+    const token = localStorage.getItem('backoffice_token');
     try {
       // 1. Borrar sesión en Supabase
-      const delRes = await fetch('/api/delete-session', {
+      const delRes = await fetch(`/api/delete-session?token=${token}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
+      if (delRes.status === 401) return logout();
       const delData = await delRes.json();
       if (!delData.success) {
         alert('Error al borrar la sesión: ' + (delData.error || 'Error desconocido'));
         return;
       }
       // 2. Reiniciar bot en Railway
-      const res = await fetch('/api/restart-bot', {
+      const res = await fetch(`/api/restart-bot?token=${token}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
+      if (res.status === 401) return logout();
       const data = await res.json();
       if (data.success) {
         // Mostrar mensaje y contador regresivo en la página

@@ -31,18 +31,7 @@ body {
 }
 
 body {
-    font-family: Arial, sans-serif;
-    background: #ece5dd;
-    /* Usá el alto real del viewport (sin cortar el botón) */
-    min-height: var(--app-vh, 100dvh);
-    /* min-height: var(--app-vh, var(--vh, 100dvh)); */
-    /* Evita overflow horizontal por 100vw + scrollbars */
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    /* Mejor gesto tap en mobile (menos zoom fantasma) */
+    font-family: var(--font-main, 'Outfit', sans-serif);
     touch-action: manipulation;
 }
 

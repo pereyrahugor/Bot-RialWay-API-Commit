@@ -61,10 +61,10 @@ export class CalendarEvents {
                 calendarId: CALENDAR_ID,
                 maxResults: 1,
             });
-            console.log("[TEST CALENDAR] Eventos encontrados:", res.data.items);
+            // console.log("[TEST CALENDAR] Eventos encontrados:", res.data.items);
             return res.data.items;
         } catch (err) {
-            console.error("[TEST CALENDAR] Error accediendo al calendario:", err);
+            // console.error("[TEST CALENDAR] Error accediendo al calendario:", err);
             return null;
         }
     }

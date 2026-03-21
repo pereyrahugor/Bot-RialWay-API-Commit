@@ -43,8 +43,7 @@ export const welcomeFlowButton = addKeyword<BaileysProvider, MemoryDB>(EVENTS.AC
         // Agregamos a la cola para que el asistente lo procese
         queue.push({ ctx, flowDynamic, state, provider, gotoFlow });
 
-        if (!userLocks.get(userId)) {
-            // No usamos await para liberar el webhook del proveedor inmediatamente
-            handleQueue(userId);
+        if (!userLocks.get(userId) && queue.length === 1) {
+            await handleQueue(userId);
         }
     });

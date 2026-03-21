@@ -12,7 +12,7 @@ const timers = {};
 // Función para iniciar el temporizador de inactividad de un usuario
 const start = (ctx: BotContext, gotoFlow: (a: TFlow) => Promise<void>, ms: number) => {
     timers[ctx.from] = setTimeout(() => {
-        console.log(`Tiempo de espera finalizado del usuario: ${ctx.from}`);
+        // console.log(`Tiempo de espera finalizado del usuario: ${ctx.from}`);
         return gotoFlow(idleFlow);
     }, ms);
 };
@@ -22,7 +22,7 @@ const start = (ctx: BotContext, gotoFlow: (a: TFlow) => Promise<void>, ms: numbe
 const reset = (ctx: BotContext, gotoFlow: (a: TFlow) => Promise<void>, ms: number) => {
     stop(ctx);
     if (timers[ctx.from]) {
-        console.log(`Contador reseteado del usuario: ${ctx.from}`)
+        // console.log(`Contador reseteado del usuario: ${ctx.from}`)
         clearTimeout(timers[ctx.from]);
     }
     start(ctx, gotoFlow, ms);

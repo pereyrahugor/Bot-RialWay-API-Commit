@@ -15,7 +15,7 @@ function toArgentinaTime(fechaReservaStr: string): string {
 }
 import { executeDbQuery } from '../utils/dbHandler';
 import { JsonBlockFinder } from "../Api-Google/JsonBlockFinder";
-import { CalendarEvents } from "../Api-Google/calendarEvents";
+// import { CalendarEvents } from "../Api-Google/calendarEvents";
 import { downloadFileFromDrive } from './googleDriveHandler';
 import fs from 'fs';
 import moment from 'moment';
@@ -194,10 +194,12 @@ export class AssistantResponseProcessor {
         } else {
             // console.log('[WhatsApp Debug] Mensaje entrante del asistente:', response);
             // Si el usuario está bloqueado por una operación API, evitar procesar nuevos mensajes
+/*
             if (userApiBlockMap.has(ctx.from)) {
                 console.log(`[API Block] Mensaje ignorado de usuario bloqueado: ${ctx.from}`);
                 return;
             }
+*/
         }
         let jsonData: any = null;
         let jsonContent: string = "";
@@ -361,16 +363,19 @@ export class AssistantResponseProcessor {
 
             // Bloquear usuario temporalmente si es WhatsApp
             let unblockUser = null;
+/*
             if (ctx && ctx.type !== 'webchat' && ctx.from) {
                 userApiBlockMap.set(ctx.from, true);
                 const timeoutId = setTimeout(() => { userApiBlockMap.delete(ctx.from); }, API_BLOCK_TIMEOUT_MS);
                 unblockUser = () => { clearTimeout(timeoutId); userApiBlockMap.delete(ctx.from); };
             }
+*/
 
             const tipo = jsonData.type.trim();
 
             try {
                 if (tipo === "create_event") {
+/*
                     apiResponse = await CalendarEvents.createEvent({
                         fecha: jsonData.fecha,
                         hora: jsonData.hora,
@@ -378,19 +383,26 @@ export class AssistantResponseProcessor {
                         descripcion: jsonData.descripcion,
                         invitados: jsonData.invitados
                     });
+*/
                 } else if (tipo === "available_event") {
+/*
                     const start = `${jsonData.fecha}T${jsonData.hora}:00-03:00`;
                     const end = moment(start).add(1, 'hour').format('YYYY-MM-DDTHH:mm:ssZ');
                     apiResponse = await CalendarEvents.checkAvailability(start, end);
+*/
                 } else if (tipo === "modify_event") {
+/*
                     apiResponse = await CalendarEvents.updateEvent(jsonData.id, {
                         fecha: jsonData.fecha,
                         hora: jsonData.hora,
                         titulo: jsonData.titulo,
                         descripcion: jsonData.descripcion
                     });
+*/
                 } else if (tipo === "cancel_event") {
+/*
                     apiResponse = await CalendarEvents.deleteEvent(jsonData.id);
+*/
                 // } else if (tipo === "#BUSCAR_PRODUCTO#") {
                 //     const payload = jsonData.payload || jsonData.data || {};
                 //     apiResponse = await searchProduct(payload);

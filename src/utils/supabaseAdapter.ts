@@ -36,9 +36,9 @@ export const useSupabaseAuthState = async (
                     updated_at: new Date().toISOString()
                 }, { onConflict: 'project_id,session_id,key_id' });
             if (error) throw error;
-            console.log(`[SupabaseAdapter] ✅ Data saved for key: ${key}`);
+            // console.log(`[SupabaseAdapter] ✅ Data saved for key: ${key}`);
         } catch (error) {
-            console.error('[SupabaseAdapter] ❌ Error saving data:', key, error);
+            // console.error('[SupabaseAdapter] ❌ Error saving data:', key, error);
             // No lanzar throw para no romper el flujo del bot, pero loguear
         }
     };
@@ -63,7 +63,7 @@ export const useSupabaseAuthState = async (
             const row = data.find((r: any) => r.key_id === key);
             return row ? JSON.parse(JSON.stringify(row.data), BufferJSON.reviver) : null;
         } catch (error) {
-            console.error('[SupabaseAdapter] Error reading data:', key, error);
+            // console.error('[SupabaseAdapter] Error reading data:', key, error);
             return null;
         }
     };
@@ -80,9 +80,9 @@ export const useSupabaseAuthState = async (
                 .eq('project_id', projectId)
                 .eq('session_id', sessionId);
             if (error) throw error;
-            console.log(`[SupabaseAdapter] Session ${sessionId} cleared for project ${projectId}`);
+            // console.log(`[SupabaseAdapter] Session ${sessionId} cleared for project ${projectId}`);
         } catch (error) {
-            console.error('[SupabaseAdapter] Error clearing session:', error);
+            // console.error('[SupabaseAdapter] Error clearing session:', error);
         }
     };
 
@@ -125,7 +125,7 @@ export const useSupabaseAuthState = async (
                             }
                         });
                     } catch (e) {
-                        console.error('[SupabaseAdapter] Error in keys.get:', e);
+                        // console.error('[SupabaseAdapter] Error in keys.get:', e);
                     }
 
                     return data;

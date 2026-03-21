@@ -39,8 +39,8 @@ export const addToSheet = async (data: GenericResumenData): Promise<void> => {
             requestBody: { values },
         });
 
-        console.log("✅ Datos enviados a Google Sheets con éxito.");
+        // console.log("✅ Datos enviados a Google Sheets con éxito.");
     } catch (error) {
-        console.error("❌ Error al enviar datos a Google Sheets:", error);
+        // console.error("❌ Error al enviar datos a Google Sheets:", error);
     }
 };

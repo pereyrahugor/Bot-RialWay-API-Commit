@@ -9,8 +9,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Cargar variables actuales
     async function loadVariables() {
+        const token = localStorage.getItem('backoffice_token');
         try {
-            const response = await fetch('/api/variables');
+            const response = await fetch(`/api/variables?token=${token}`);
+            if (response.status === 401) return logout();
             const data = await response.json();
             
             if (data.success && data.variables) {
@@ -88,7 +90,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateBtn.textContent = 'Actualizando...';
 
         try {
-            const response = await fetch('/api/update-variables', {
+            const token = localStorage.getItem('backoffice_token');
+            const response = await fetch(`/api/update-variables?token=${token}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -96,6 +99,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 body: JSON.stringify({ variables: changedVariables })
             });
 
+            if (response.status === 401) return logout();
             const data = await response.json();
 
             if (data.success) {

@@ -11,9 +11,7 @@ class ErrorReporter {
     }
 
     async reportError(error: Error, userId: string, userLink: string) {
-        const errorMessage = `⚠ pregunta que NO supe responder ⚠\n` +
-            `No supe: ${error.message}\n` +
-            `whatsappLink = ${userLink}`;
+        const errorMessage = `Error externo, se interrumpio la conexion con OpenAI. Verificar el chat manualmente\n${userLink}`;
 
         try {
             await this.provider.sendMessage(this.groupId, errorMessage, {});

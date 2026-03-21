@@ -101,9 +101,8 @@ export const locationFlow = addKeyword(EVENTS.LOCATION).addAction(
                       userQueues.set(userId, []);
                     }
                     userQueues.get(userId).push({ ctx, flowDynamic, state, provider: ctx.provider, gotoFlow });
-                    if (!userLocks.get(userId)) {
-                      // No usamos await para liberar el webhook del proveedor inmediatamente
-                      handleQueue(userId);
+                    if (!userLocks.get(userId) && userQueues.get(userId).length === 1) {
+                      await handleQueue(userId);
                     }
                     console.log('Dirección modificada:', direccionModificada);
                     console.log('Respuesta completa de Google Maps API:', JSON.stringify(mapsData, null, 2));

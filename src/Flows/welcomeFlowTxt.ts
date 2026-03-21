@@ -21,6 +21,14 @@ export const welcomeFlowTxt = addKeyword<BaileysProvider, MemoryDB>(EVENTS.WELCO
             return;
         }
 
+        // --- FILTRO DE ECO / MENSAJES PROPIOS ---
+        const botNumber = (process.env.YCLOUD_WABA_NUMBER || '').replace(/\D/g, '');
+        const senderNumber = (userId || '').replace(/\D/g, '');
+        
+        if (ctx.key?.fromMe || (botNumber && senderNumber === botNumber)) {
+            return;
+        }
+
         console.log(`📩 Mensaje recibido de :${userId}`);
 
         reset(ctx, gotoFlow, setTime);
@@ -38,10 +46,10 @@ export const welcomeFlowTxt = addKeyword<BaileysProvider, MemoryDB>(EVENTS.WELCO
         }
 
         console.log("📝 Mensaje de texto recibido");
+
         queue.push({ ctx, flowDynamic, state, provider, gotoFlow });
 
-        if (!userLocks.get(userId)) {
-            // No usamos await para liberar el webhook del proveedor inmediatamente
-            handleQueue(userId);
+        if (!userLocks.get(userId) && queue.length === 1) {
+            await handleQueue(userId);
         }
     });

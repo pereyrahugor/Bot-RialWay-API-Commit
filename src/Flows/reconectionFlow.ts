@@ -1,8 +1,9 @@
 // Clase para manejar la lógica de reconexión cuando el campo nombre está vacío
-import { safeToAsk } from '../app';
+import { safeToAsk } from '../utils/openaiHelper';
 import { extraerDatosResumen, GenericResumenData } from '~/utils/extractJsonData';
 import { downloadFileFromDrive } from '~/utils/googleDriveHandler';
 import { HistoryHandler } from '~/utils/historyHandler';
+import { AssistantResponseProcessor } from '~/utils/AssistantResponseProcessor';
 import fs from 'fs';
 
 // Opciones para configurar el flujo de reconexión
@@ -10,6 +11,8 @@ interface ReconectionOptions {
     ctx: any; // Contexto del usuario
     state: any; // Estado de la conversación
     provider: any; // Proveedor de mensajería
+    flowDynamic: any; // Dinamismo del flujo
+    gotoFlow: any;    // Navegación de flujo
     maxAttempts?: number; // Máximo de intentos de reconexión
     timeoutMs?: number; // Tiempo de espera entre intentos (ms)
     onSuccess: (data: GenericResumenData) => Promise<void>; // Callback si se obtiene el nombre
@@ -24,6 +27,8 @@ export class ReconectionFlow {
     private readonly ctx: any; // Contexto del usuario
     private readonly state: any; // Estado de la conversación
     private readonly provider: any; // Proveedor de mensajería
+    private readonly flowDynamic: any; // Dinamismo del flujo
+    private readonly gotoFlow: any; // Navegación de flujo
     private readonly onSuccess: (data: GenericResumenData) => Promise<void>; // Acción al obtener nombre
     private readonly onFail: () => Promise<void>; // Acción al fallar todos los intentos
     private readonly ASSISTANT_ID = process.env.ASSISTANT_ID ?? '';
@@ -35,6 +40,8 @@ export class ReconectionFlow {
         this.ctx = options.ctx;
         this.state = options.state;
         this.provider = options.provider;
+        this.flowDynamic = options.flowDynamic;
+        this.gotoFlow = options.gotoFlow;
         this.maxAttempts = options.maxAttempts ?? 3;
         this.timeoutMs = options.timeoutMs ?? 60000;
         this.onSuccess = options.onSuccess;
@@ -48,7 +55,7 @@ export class ReconectionFlow {
             /@channel$/.test(userId) ||
             /@lid$/.test(userId)
         ) {
-            console.log(`ReconectionFlow ignorado por filtro de contacto: ${userId}`);
+            // console.log(`ReconectionFlow ignorado por filtro de contacto: ${userId}`);
             // No continuar con la lógica de reconexión
             return;
         }
@@ -70,14 +77,14 @@ export class ReconectionFlow {
         // Intentar restaurar el estado previo si existe
         if (this.state && this.state.reconectionFlow) {
             this.restoreState(this.state.reconectionFlow);
-            console.log('[ReconectionFlow] Estado restaurado:', this.state.reconectionFlow);
+            // console.log('[ReconectionFlow] Estado restaurado:', this.state.reconectionFlow);
         }
         const originalCtx = { ...this.ctx };
         const originalFrom = originalCtx.from;
         const jid = originalFrom && originalFrom.endsWith('@s.whatsapp.net')
             ? originalFrom
             : `${originalFrom}@s.whatsapp.net`;
-        console.log(`[ReconectionFlow] originalCtx.from:`, originalFrom, '| jid usado:', jid);
+        // console.log(`[ReconectionFlow] originalCtx.from:`, originalFrom, '| jid usado:', jid);
         while (this.attempts < this.maxAttempts) {
             this.attempts++;
             // Guardar el estado actual de reconexión en el state global
@@ -125,11 +132,11 @@ export class ReconectionFlow {
             while ((pdfMatch = pdfRegex.exec(originalMsg)) !== null) {
                 const fileId = pdfMatch[1];
                 try {
-                    console.log(`[ReconectionFlow] Detectado PDF ID: ${fileId}. Descargando...`);
+                    // console.log(`[ReconectionFlow] Detectado PDF ID: ${fileId}. Descargando...`);
                     const filePath = await downloadFileFromDrive(fileId);
                     pdfPaths.push(filePath);
                 } catch (err: any) {
-                    console.error(`[ReconectionFlow PDF] Error con ID ${fileId}:`, err.message);
+                    // console.error(`[ReconectionFlow PDF] Error con ID ${fileId}:`, err.message);
                 }
             }
 
@@ -138,7 +145,7 @@ export class ReconectionFlow {
 
             if (jid) {
                 try {
-                    console.log(`[ReconectionFlow] Enviando mensaje de reconexión a:`, jid);
+                    // console.log(`[ReconectionFlow] Enviando mensaje de reconexión a:`, jid);
                     await this.provider.sendText(jid, cleanMsg);
                     // Persistir en el historial del backoffice (vía Supabase)
                     await HistoryHandler.saveMessage(this.ctx.from, 'assistant', cleanMsg, 'text');
@@ -146,7 +153,7 @@ export class ReconectionFlow {
                     // Enviar los PDFs descargados
                     for (const pdfPath of pdfPaths) {
                         try {
-                            console.log(`[ReconectionFlow] Enviando archivo: ${pdfPath}`);
+                            // console.log(`[ReconectionFlow] Enviando archivo: ${pdfPath}`);
                             // Usamos sendFile si el provider lo soporta, o sendMessage con media (común en Baileys)
                             if (this.provider.sendFile) {
                                 await this.provider.sendFile(jid, pdfPath, "📄 Documento adjunto");
@@ -161,20 +168,20 @@ export class ReconectionFlow {
                             setTimeout(() => {
                                 if (fs.existsSync(pdfPath)) {
                                     fs.unlinkSync(pdfPath);
-                                    console.log(`[ReconectionFlow] Archivo temporal borrado: ${pdfPath}`);
+                                    // console.log(`[ReconectionFlow] Archivo temporal borrado: ${pdfPath}`);
                                 }
                             }, 5000);
                         } catch (mediaErr) {
-                            console.error(`[ReconectionFlow Media] Error enviando media ${pdfPath}:`, mediaErr);
+                            // console.error(`[ReconectionFlow Media] Error enviando media ${pdfPath}:`, mediaErr);
                         }
                     }
                 } catch (err) {
-                    console.error(`[ReconectionFlow] Error enviando mensaje de reconexión a ${jid}:`, err);
+                    // console.error(`[ReconectionFlow] Error enviando mensaje de reconexión a ${jid}:`, err);
                 }
             } else {
-                console.warn('[ReconectionFlow] Contexto inválido, no se puede enviar mensaje de reconexión.');
+                // console.warn('[ReconectionFlow] Contexto inválido, no se puede enviar mensaje de reconexión.');
             }
-            console.log(`[ReconectionFlow] Intento ${this.attempts} de ${this.maxAttempts} para ${jid} | Timeout: ${timeout}ms`);
+            // console.log(`[ReconectionFlow] Intento ${this.attempts} de ${this.maxAttempts} para ${jid} | Timeout: ${timeout}ms`);
 
             // Espera el timeout o la respuesta del usuario, lo que ocurra primero
             const userResponded = await this.waitForUserResponse(jid, timeout);
@@ -187,7 +194,7 @@ export class ReconectionFlow {
             }
 
             // Si no respondió, intentar obtener el resumen nuevamente desde el asistente
-            const resumen = await safeToAsk(this.ASSISTANT_ID, "GET_RESUMEN", this.state, this.ctx.from);
+            const resumen = await safeToAsk(this.ASSISTANT_ID, "GET_RESUMEN", this.state) as string;
             const data: GenericResumenData = extraerDatosResumen(resumen);
             const tipo = data.tipo || "SI_RESUMEN";
             if (tipo === "SI_RESUMEN") {
@@ -234,13 +241,12 @@ export class ReconectionFlow {
                 }
                 // Enviar el mensaje recibido al asistente como "hola, [msj]"
                 const userMsg = msg.body;
-                const prompt = `hola, ${userMsg}`;
                 try {
-                    // Persistir el mensaje real del usuario en el backoffice
-                    await HistoryHandler.saveMessage(this.ctx.from, 'user', userMsg, 'text', this.ctx.pushName || null);
-                    await safeToAsk(this.ASSISTANT_ID, prompt, this.state, this.ctx.from);
+                    // No procesamos la respuesta aquí para evitar doble respuesta, 
+                    // ya que al retornar resolve(true), el flujo derivará a welcomeFlowTxt
+                    // que se encargará del procesamiento normal.
                 } catch (err) {
-                    console.error('[ReconectionFlow] Error enviando mensaje al asistente:', err);
+                    // console.error('[ReconectionFlow] Error en onMessage del reconector:', err);
                 }
                 responded = true;
                 if (this.provider.off) this.provider.off('message', onMessage);

@@ -1,385 +1,163 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+    <script src="/js/auth-check.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Backoffice - Neurolinks</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
-    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
-    <style>
-        :root {
-            --primary: #6366f1;
-            --bg: #0f172a;
-            --sidebar: #1e293b;
-            --card: #1e293b;
-            --text: #f8fafc;
-            --accent: #8b5cf6;
-        }
-        body {
-            margin: 0; padding: 0;
-            font-family: 'Outfit', sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
-            display: flex;
-            height: 100vh;
-            overflow: hidden;
-        }
-        
-        /* Sidebar */
-        #sidebar {
-            width: 350px;
-            background: var(--sidebar);
-            border-right: 1px solid rgba(255,255,255,0.1);
-            display: flex;
-            flex-direction: column;
-        }
-        .sidebar-header {
-            padding: 1.5rem;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        #chat-list {
-            flex: 1;
-            overflow-y: auto;
-        }
-        .chat-item {
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-            cursor: pointer;
-            transition: background 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-        .chat-item:hover { background: rgba(255,255,255,0.05); }
-        .chat-item.active { background: rgba(99, 102, 241, 0.2); border-left: 4px solid var(--primary); }
-        .chat-avatar { 
-            width: 44px; 
-            height: 44px; 
-            border-radius: 50%; 
-            background: linear-gradient(135deg, #6366f1, #a855f7); 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            font-weight: 700; 
-            font-size: 1.1rem; 
-            flex-shrink: 0; 
-            overflow: hidden;
-            position: relative; 
-        }
-        .chat-avatar img {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            object-fit: cover;
-            z-index: 2;
-            border-radius: 50%;
-            background: inherit;
-        }
-        .chat-info { flex: 1; overflow: hidden; }
-        .chat-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .chat-last-msg { font-size: 0.8rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        
-        /* Main Chat Area */
-        #main-content {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            background: radial-gradient(circle at top right, #1e1b4b, #0f172a);
-        }
-        #chat-header {
-            padding: 1rem 2rem;
-            background: rgba(30, 41, 59, 0.8);
-            backdrop-filter: blur(10px);
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        .header-user { display: flex; align-items: center; gap: 1rem; }
-        
-        /* Intervention Switch */
-        .switch-container { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
-        .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334155; transition: .4s; border-radius: 24px; }
-        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--primary); }
-        input:checked + .slider:before { transform: translateX(26px); }
-
-        #messages {
-            flex: 1;
-            padding: 2rem;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-        .msg { max-width: 70%; padding: 0.75rem 1.25rem; border-radius: 1rem; line-height: 1.5; font-size: 0.95rem; position: relative; }
-        .msg.user { align-self: flex-start; background: #334155; color: white; border-bottom-left-radius: 0.2rem; }
-        .msg.assistant { align-self: flex-end; background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; border-bottom-right-radius: 0.2rem; }
-        
-        .msg-time {
-            font-size: 0.7rem;
-            opacity: 0.7;
-            margin-top: 0.25rem;
-            display: block;
-            text-align: right;
-        }
-        .msg.user .msg-time { text-align: left; }
-        
-        #input-area {
-            padding: 1.5rem 2rem;
-            background: rgba(30, 41, 59, 0.8);
-            backdrop-filter: blur(10px);
-            border-top: 1px solid rgba(255,255,255,0.1);
-            display: flex;
-            gap: 1rem;
-        }
-        #message-input {
-            flex: 1;
-            background: #0f172a;
-            border: 1px solid #334155;
-            padding: 0.75rem 1.25rem;
-            border-radius: 0.75rem;
-            color: white;
-            outline: none;
-        }
-        #message-input:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-send { background: var(--primary); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 0.75rem; font-weight: 600; cursor: pointer; }
-        .btn-send:disabled { background: #475569; cursor: not-allowed; }
-
-        /* Status colors */
-        .status-bot { color: #4ade80; }
-        .status-human { color: #f87171; }
-    </style>
+    <title>🤖 {{BOT_NAME}} - Backoffice</title>
+    <link rel="stylesheet" href="/style/backoffice.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/style/crm-common.css">
+    <link rel="stylesheet" href="/style/backoffice.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
-<body>
+<body data-theme="light">
+
+    <div id="navbar">
+        <div class="nav-item active" title="Conversaciones" onclick="window.location.href='/backoffice'"><i class="fas fa-comment-dots"></i></div>
+        <div class="nav-item" title="Dashboard" onclick="window.location.href='/dashboard'"><i class="fas fa-th-large"></i></div>
+        <div class="nav-item" title="Variables" onclick="window.location.href='/variables'"><i class="fas fa-code"></i></div>
+        <div class="nav-item" title="Webchat" onclick="window.location.href='/webchat'"><i class="fas fa-desktop"></i></div>
+        <div class="nav-item" title="Contactos"><i class="fas fa-address-book"></i></div>
+        <div class="nav-item" id="theme-toggle" title="Cambiar Tema"><i class="fas fa-moon"></i></div>
+        <div style="flex:1"></div>
+        <div class="nav-item" onclick="logout()" title="Cerrar Sesión" style="color:#f87171;"><i class="fas fa-sign-out-alt"></i></div>
+    </div>
+
     <div id="sidebar">
         <div class="sidebar-header">
-            <h2 style="margin:0; font-size: 1.2rem;">Backoffice</h2>
-            <button onclick="logout()" style="background:none; border:none; color:#f87171; cursor:pointer; font-size:0.8rem;">Salir</button>
+            <div class="chat-avatar" style="width: 32px; height: 32px; background: var(--accent);">
+                <span>🤖</span>
+            </div>
+            <h3 style="margin:0; font-size:1rem; flex:1; margin-left:12px;">{{BOT_NAME}}</h3>
+            <div style="display:flex; gap:8px;">
+                <button class="btn-icon" onclick="toggleCRMPanel()" title="Detalles del Lead">
+                    <i class="fas fa-user-edit"></i>
+                </button>
+            </div>
         </div>
+
+        <div class="search-container">
+            <div class="search-wrapper">
+                <i class="fas fa-search" style="color:var(--wa-text-secondary); font-size: 0.8rem;"></i>
+                <input type="text" id="search-input" class="search-input" placeholder="Buscar chat por ID o etiqueta..." oninput="handleSearch()">
+            </div>
+            <select id="filter-tag" class="search-input" style="background:var(--wa-search-bg); border-radius:8px; width:100%; border:none; margin-top:2px;" onchange="handleSearch()">
+                <option value="">Todas las etiquetas</option>
+            </select>
+        </div>
+
         <div id="chat-list">
-            <!-- Cargando hilos... -->
+            <!-- Cargando chats... -->
         </div>
     </div>
 
     <div id="main-content">
         <div id="chat-header">
             <div class="header-user">
-                <div id="active-chat-avatar" class="chat-avatar">?</div>
+                <div class="chat-avatar" id="active-chat-avatar"></div>
                 <div>
-                    <div id="active-chat-name" class="chat-name">Selecciona un chat</div>
-                    <div id="active-chat-id" style="font-size:0.8rem; color:#94a3b8;">---</div>
+                    <div style="font-weight:600;" id="active-chat-phone">Seleccione un chat</div>
+                    <div style="font-size:0.8rem; color:var(--wa-text-secondary);" id="active-chat-name"></div>
+                    <div id="active-chat-tags" style="display:flex; gap:4px; margin-top:2px;"></div>
                 </div>
             </div>
-            <div class="intervention-status">
-                <div class="switch-container">
-                    <span id="bot-status-text">Bot Activo</span>
-                    <label class="switch">
-                        <input type="checkbox" id="bot-toggle" disabled onchange="toggleBot(this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
+
+            <div class="switch-container">
+                <span id="bot-status-text">Sin chat seleccionado</span>
+                <label class="switch">
+                    <input type="checkbox" id="bot-toggle" disabled onchange="toggleBot(this.checked)">
+                    <span class="slider"></span>
+                </label>
             </div>
         </div>
 
         <div id="messages">
-            <!-- Mensajes aquí -->
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; flex-direction:column; opacity:0.3;">
+                <i class="fas fa-comments" style="font-size:5rem; margin-bottom:1rem;"></i>
+                <h2>Bienvenido al panel de control</h2>
+                <p>Selecciona un chat a la izquierda para comenzar.</p>
+            </div>
         </div>
 
         <div id="input-area">
-            <input type="text" id="message-input" placeholder="Escribe un mensaje..." disabled>
-            <button class="btn-send" id="send-btn" onclick="sendMessage()" disabled>Enviar</button>
+            <button class="btn-icon" id="attach-btn" title="Adjuntar archivo" disabled onclick="document.getElementById('file-input').click()">
+                <i class="fas fa-paperclip"></i>
+            </button>
+            <input type="file" id="file-input" style="display:none;" onchange="handleFileSelect(this)">
+            
+            <div class="input-wrapper">
+                <input type="text" id="message-input" placeholder="Escribe un mensaje aquí" disabled
+                       onkeydown="if(event.key === 'Enter') sendMessage()">
+            </div>
+            
+            <button class="btn-icon" id="send-btn" title="Enviar mensaje" onclick="sendMessage()" disabled style="color: var(--wa-accent);">
+                <i class="fas fa-paper-plane"></i>
+            </button>
         </div>
     </div>
 
-    <script>
-        const token = localStorage.getItem('backoffice_token');
-        if (!token) window.location.href = '/login';
-
-        let activeChatId = null;
-        let chats = [];
-
-        // Inicializar Socket.IO para tiempo real
-        const socket = io();
-
-        socket.on('connect', () => {
-            console.log('✅ Conectado al servidor de tiempo real');
-        });
-
-        socket.on('new_message', (payload) => {
-            console.log('📡 Nuevo mensaje recibido:', payload);
-            // Si el mensaje es para el chat que estamos viendo, recargar mensajes
-            if (activeChatId === payload.chatId) {
-                fetchMessages(activeChatId);
-            }
-            // En cualquier caso, refrescar la lista lateral para actualizar el orden/último mensaje
-            fetchChats();
-        });
-
-        socket.on('bot_toggled', (payload) => {
-            console.log('📡 Bot toggled:', payload);
-            if (activeChatId === payload.chatId) {
-                const toggle = document.getElementById('bot-toggle');
-                toggle.checked = payload.bot_enabled;
-                updateBotStatusText(payload.bot_enabled);
-                updateInputState(payload.bot_enabled);
-            }
-            fetchChats();
-        });
-
-        async function fetchChats() {
-            try {
-                const res = await fetch(`/api/backoffice/chats?token=${token}`);
-                if (res.status === 401) logout();
-                chats = await res.json();
-                renderChatList();
-            } catch (e) { console.error(e); }
-        }
-
-        function renderChatList() {
-            const list = document.getElementById('chat-list');
-            list.innerHTML = chats.map(chat => {
-                const initial = (chat.name || chat.id).charAt(0).toUpperCase();
-                const avatarUrl = `/api/backoffice/profile-pic/${chat.id}?token=${token}`;
+    <!-- Panel CRM Lateral -->
+    <div id="crm-panel">
+        <div class="crm-header">
+            <button class="btn-icon" onclick="toggleCRMPanel()"><i class="fas fa-times"></i></button>
+            <h3 style="margin:0;">Información del Lead</h3>
+        </div>
+        
+        <div class="crm-content">
+            <div class="crm-section">
+                <label>Nombre del Contacto</label>
+                <input type="text" id="crm-name" class="crm-input" placeholder="Nombre completo">
                 
-                return `
-                    <div class="chat-item ${activeChatId === chat.id ? 'active' : ''}" onclick="selectChat('${chat.id}')">
-                        <div class="chat-avatar">
-                            <span style="position:relative; z-index:1;">${initial}</span>
-                            <img src="${avatarUrl}" onerror="this.style.display='none'">
-                        </div>
-                        <div class="chat-info">
-                            <div class="chat-name">${chat.name || chat.id}</div>
-                            <div style="font-size:0.75rem; opacity:0.8; margin-top:0.25rem;">
-                                ${chat.bot_enabled ? '🤖 Bot' : '👤 Humano'}
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
+                <label>Correo Electrónico</label>
+                <input type="email" id="crm-email" class="crm-input" placeholder="ejemplo@correo.com">
+                
+                <label>Fuente del Lead</label>
+                <select id="crm-source" class="crm-input">
+                    <option value="">Desconocida</option>
+                    <option value="Instagram">Instagram</option>
+                    <option value="Facebook">Facebook</option>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="Web">Web</option>
+                    <option value="Referido">Referido</option>
+                </select>
+                
+                <label>Notas / Observaciones</label>
+                <textarea id="crm-notes" class="crm-input" rows="4" placeholder="Escribe notas aquí..."></textarea>
+                
+                <button class="btn-primary" onclick="saveCRMDetails()" style="width:100%; margin-top:10px;">
+                    <i class="fas fa-save" style="margin-right:8px;"></i> Guardar Cambios
+                </button>
+            </div>
 
-        async function selectChat(id) {
-            activeChatId = id;
-            const chat = chats.find(c => c.id === id);
-            
-            document.getElementById('active-chat-name').innerText = chat.name || chat.id;
-            document.getElementById('active-chat-id').innerText = chat.id;
-            
-            const headerAvatar = document.getElementById('active-chat-avatar');
-            const initial = (chat.name || chat.id).charAt(0).toUpperCase();
-            const avatarUrl = `/api/backoffice/profile-pic/${chat.id}?token=${token}`;
-            
-            headerAvatar.innerHTML = `
-                <span style="position:relative; z-index:1;">${initial}</span>
-                <img src="${avatarUrl}" style="width:100%; height:100%; object-fit:cover; position:absolute; top:0; left:0; z-index:2;" onerror="this.style.display='none'">
-            `;
-            
-            const botToggle = document.getElementById('bot-toggle');
-            botToggle.disabled = false;
-            botToggle.checked = chat.bot_enabled;
-            updateBotStatusText(chat.bot_enabled);
+            <div class="crm-divider"></div>
 
-            // Inputs habilitados solo si el bot está desactivado (intervención humana)
-            updateInputState(chat.bot_enabled);
-
-            renderChatList();
-            fetchMessages(id);
-        }
-
-        function updateBotStatusText(enabled) {
-            const txt = document.getElementById('bot-status-text');
-            txt.innerText = enabled ? 'Bot Activo' : 'Intervención Humana';
-            txt.className = enabled ? 'status-bot' : 'status-human';
-        }
-
-        function updateInputState(botEnabled) {
-            const input = document.getElementById('message-input');
-            const btn = document.getElementById('send-btn');
-            input.disabled = botEnabled;
-            btn.disabled = botEnabled;
-        }
-
-        function formatTime(isoString) {
-            if (!isoString) return '';
-            const date = new Date(isoString);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        }
-
-        async function fetchMessages(chatId) {
-            const res = await fetch(`/api/backoffice/messages/${chatId}?token=${token}`);
-            const messages = await res.json();
-            const container = document.getElementById('messages');
-            container.innerHTML = messages.map(m => `
-                <div class="msg ${m.role}">
-                    <div class="msg-body">${m.content}</div>
-                    <span class="msg-time">${formatTime(m.created_at)}</span>
+            <!-- Gestión de Etiquetas integrada en CRM -->
+            <div class="crm-section">
+                <h4 style="margin:0 0 10px 0;"><i class="fas fa-tags" style="margin-right:8px;"></i> Etiquetas</h4>
+                
+                <div id="current-chat-tags-section">
+                    <div id="available-tags-to-assign" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                 </div>
-            `).join('');
-            container.scrollTop = container.scrollHeight;
-        }
 
-        async function toggleBot(enabled) {
-            const res = await fetch('/api/backoffice/toggle-bot', {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': token
-                },
-                body: JSON.stringify({ chatId: activeChatId, enabled })
-            });
+                <div style="margin-top:20px; padding: 15px; background: var(--bg-sidebar); border-radius: 12px; border: 1px dashed var(--border-color);">
+                    <h5 style="margin:0 0 10px 0;">Crear Nueva Etiqueta</h5>
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="new-tag-name" class="crm-input" style="margin:0;" placeholder="Nombre...">
+                        <input type="color" id="new-tag-color" value="#6366f1" style="height:35px; width:35px; border:none; padding:0; background:none; cursor:pointer;">
+                        <button class="btn-icon" onclick="createTag()"><i class="fas fa-plus"></i></button>
+                    </div>
+                </div>
 
-            if (res.ok) {
-                const chat = chats.find(c => c.id === activeChatId);
-                chat.bot_enabled = enabled;
-                updateBotStatusText(enabled);
-                updateInputState(enabled);
-                renderChatList();
-            }
-        }
+                <div id="tag-list-editor" style="margin-top:20px;">
+                    <!-- Lista de etiquetas globales para editar/eliminar -->
+                </div>
+            </div>
+        </div>
+    </div>
 
-        async function sendMessage() {
-            const input = document.getElementById('message-input');
-            const content = input.value.trim();
-            if (!content || !activeChatId) return;
-
-            const res = await fetch('/api/backoffice/send-message', {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': token
-                },
-                body: JSON.stringify({ chatId: activeChatId, content })
-            });
-
-            if (res.ok) {
-                input.value = '';
-                fetchMessages(activeChatId);
-            } else {
-                const errorData = await res.json();
-                alert('Error al enviar mensaje: ' + (errorData.error || 'Error desconocido'));
-            }
-        }
-
-        function logout() {
-            localStorage.removeItem('backoffice_token');
-            window.location.href = '/login';
-        }
-
-        // Auto-refresh lista de chats
-        // Auto-refresh lista de chats (cada 30 seg como fallback, socket hace lo pesado)
-        setInterval(fetchChats, 30000);
-        fetchChats();
-
-        // Enter to send
-        document.getElementById('message-input').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
-        });
-    </script>
+    <script src="/js/crm-common.js"></script>
+    <script src="/js/backoffice.js"></script>
 </body>
 </html>

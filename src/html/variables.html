@@ -1,14 +1,29 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+    <script src="/js/auth-check.js"></script>
     <meta charset="UTF-8">
     <title>Editar Variables</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/style/crm-common.css">
     <link rel="stylesheet" href="/style/variables.css">
 </head>
-<body>
-    <div class="container">
-        <h1>⚙️ Editar Variables de Entorno</h1>
+<body data-theme="light">
+    <!-- Navbar -->
+    <div id="navbar">
+        <div class="nav-item" title="Conversaciones" onclick="window.location.href='/backoffice'"><i class="fas fa-comment-dots"></i></div>
+        <div class="nav-item" title="Dashboard" onclick="window.location.href='/dashboard'"><i class="fas fa-th-large"></i></div>
+        <div class="nav-item active" title="Variables" onclick="window.location.href='/variables'"><i class="fas fa-code"></i></div>
+        <div class="nav-item" title="Webchat" onclick="window.location.href='/webchat'"><i class="fas fa-desktop"></i></div>
+        <div class="nav-item" id="theme-toggle" title="Cambiar Tema"><i class="fas fa-moon"></i></div>
+        <div style="flex:1"></div>
+        <div class="nav-item" onclick="logout()" title="Cerrar Sesión" style="color:#f87171;"><i class="fas fa-sign-out-alt"></i></div>
+    </div>
+
+    <div class="crm-main-container">
+        <h1 class="animate-fade">⚙️ Editar Variables de Entorno</h1>
         <p>Modifica los parámetros de configuración del bot. Estos cambios se aplicarán en Railway.</p>
         
         <form id="variables-form">
@@ -194,6 +209,8 @@
             </div>
         </form>
     </div>
+    </div>
+    <script src="/js/crm-common.js"></script>
     <script src="/js/variables.js"></script>
 </body>
 </html>

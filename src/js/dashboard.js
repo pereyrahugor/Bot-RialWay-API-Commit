@@ -1,6 +1,8 @@
 async function fetchStatus() {
+    const token = localStorage.getItem('backoffice_token');
     try {
-        const res = await fetch('/api/dashboard-status');
+        const res = await fetch(`/api/dashboard-status?token=${token}`);
+        if (res.status === 401) return logout();
         const data = await res.json();
         
         const statusEl = document.getElementById('session-status');

@@ -49,6 +49,14 @@ const welcomeFlowImg = addKeyword(EVENTS.MEDIA).addAction(
       return;
     }
 
+    // --- FILTRO DE ECO / MENSAJES PROPIOS ---
+    const botNumber = (process.env.YCLOUD_WABA_NUMBER || '').replace(/\D/g, '');
+    const senderNumber = (userId || '').replace(/\D/g, '');
+    
+    if (ctx.key?.fromMe || (botNumber && senderNumber === botNumber)) {
+        return;
+    }
+
     reset(ctx, gotoFlow, setTime);
 
     // Asegurar que userQueues tenga un array inicializado para este usuario
@@ -115,7 +123,9 @@ const welcomeFlowImg = addKeyword(EVENTS.MEDIA).addAction(
       const result = response.choices[0].message.content || "No se pudo obtener una descripción de la imagen.";
 
       // Enviar el mensaje al asistente principal para que lo procese y mantenga el contexto
-      ctx.body = `[Imagen recibida]: ${result}`;
+      const caption = ctx.body && !ctx.body.includes('_event_') ? ctx.body : '';
+      ctx.body = `[Imagen recibida]${caption ? ': ' + caption : ''}. (Análisis): ${result}`;
+
 
       // Reencolar el mensaje para que lo procese el flujo principal (texto)
       if (!userQueues.has(userId)) {
@@ -123,9 +133,8 @@ const welcomeFlowImg = addKeyword(EVENTS.MEDIA).addAction(
       }
       userQueues.get(userId).push({ ctx, flowDynamic, state, provider, gotoFlow });
       
-      if (!userLocks.get(userId)) {
-        // No usamos await para liberar el webhook del proveedor inmediatamente
-        handleQueue(userId);
+      if (!userLocks.get(userId) && userQueues.get(userId).length === 1) {
+        await handleQueue(userId);
       }
 
       
