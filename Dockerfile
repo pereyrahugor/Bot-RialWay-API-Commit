@@ -5,15 +5,30 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 
+RUN corepack enable && corepack prepare pnpm@latest --activate
+ENV PNPM_HOME=/usr/local/bin
+
+
+
+
+# Copiar archivos de configuración y dependencias primero para aprovechar la cache
+COPY package*.json ./
+COPY *-lock.yaml ./
+COPY rollup.config.js ./
+COPY tsconfig.json ./
+
 # Instalar dependencias del sistema necesarias para build
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git ca-certificates poppler-utils && update-ca-certificates
 
-# Copiar todo el código para asegurar que no falten archivos (como html, webchat, etc)
-COPY . .
-
-# Instalar pnpm globalmente de forma robusta
-RUN npm install -g pnpm
+# Instalar dependencias node
 RUN pnpm install
+
+# Copiar el resto del código fuente y carpetas necesarias antes del build
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+COPY README.md ./
+COPY nodemon.json ./
+COPY railway.json ./
 
 # Compilar y mostrar el error real en el log de Docker, imprimiendo logs si falla
 RUN pnpm run build || (echo '--- npm-debug.log ---' && cat /app/npm-debug.log || true && echo '--- pnpm-debug.log ---' && cat /app/pnpm-debug.log || true && exit 1)
@@ -37,16 +52,17 @@ RUN mkdir -p /app/credentials
 
 
 # Copiar los artefactos necesarios desde builder
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/src/html ./src/html
-COPY --from=builder /app/src/js ./src/js
-COPY --from=builder /app/src/style ./src/style
 COPY --from=builder /app/src/assets ./src/assets
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/*.json ./
 COPY --from=builder /app/*-lock.yaml ./
 COPY --from=builder /app/README.md ./
 COPY --from=builder /app/nodemon.json ./
 COPY --from=builder /app/railway.json ./
+COPY --from=builder /app/src/html ./src/html
+COPY --from=builder /app/src/js ./src/js
+COPY --from=builder /app/src/style ./src/style
 
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
@@ -61,5 +77,6 @@ RUN sed -i 's/version: \[[0-9, ]*\]/version: [2, 3000, 1023223821]/' node_module
 
 RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -m nodejs
 
+EXPOSE 8080
 
 CMD ["npm", "start"]
